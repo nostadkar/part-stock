@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A chip package (SOT-style) inside a scan frame. 108dp canvas, safe zone is the middle 66dp. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- scan frame corners -->
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="3.5" android:strokeLineCap="round"
+        android:pathData="M30,40 L30,30 L40,30 M68,30 L78,30 L78,40 M78,68 L78,78 L68,78 M40,78 L30,78 L30,68" />
+    <!-- leads -->
+    <path android:fillColor="#F2B33D"
+        android:pathData="M44,40h4v6h-4z M60,40h4v6h-4z M52,62h4v6h-4z" />
+    <!-- body -->
+    <path android:fillColor="#FFFFFF" android:pathData="M40,46h28v16h-28z" />
+    <path android:fillColor="#1F3A5F" android:pathData="M43,49h3v3h-3z" />
+</vector>
