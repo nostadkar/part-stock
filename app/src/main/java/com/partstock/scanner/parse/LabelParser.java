@@ -83,7 +83,7 @@ public final class LabelParser {
 
     // Mouser inline fields
     private static final Pattern MO_PN = Pattern.compile(
-            "^[^A-Z0-9]*(?:MOUSER\\s*)?P\\s*/?\\s*N\\s*[:.;]?\\s*([A-Z0-9][A-Z0-9\\-./+#]*)", CI);
+            "^[^A-Z0-9]*(?:MOUSER\\s*)?P\\s*/?\\s*N\\s*[:.;]?\\s*([A-Z0-9][A-Z0-9\\-./+# ]*)", CI);
     private static final Pattern MO_CUST_PN = Pattern.compile(
             "[A-Z]{2,5}\\.?\\s*P\\s*/\\s*N\\s*[:.;]?\\s*([A-Z0-9][A-Z0-9\\-./+# ]*)", CI);
     private static final Pattern MO_DESC = Pattern.compile("^[^A-Z0-9]*DESC\\w*\\s*[:.;]?\\s*([A-Z0-9].*)$", CI);
@@ -320,8 +320,10 @@ public final class LabelParser {
             String t = l.text;
             Matcher m;
             if ((m = MO_PN.matcher(t)).find()) {
-                if (p.distributorPn == null) p.distributorPn = cleanPn(m.group(1));
-                else if (p.customerPn == null) p.customerPn = cleanPn(m.group(1));
+                // Mouser part numbers have no spaces, but OCR splits them where the dot-matrix font has gaps.
+                String pn = joinPnFragments(m.group(1));
+                if (p.distributorPn == null) p.distributorPn = pn;
+                else if (p.customerPn == null) p.customerPn = pn;
                 continue;
             }
             if (p.customerPn == null && (m = MO_CUST_PN.matcher(t)).find()) {
@@ -535,6 +537,18 @@ public final class LabelParser {
     }
 
     // ---------------------------------------------------------------- cleanup helpers
+
+    /** "584-8609AIMSE 16#PBF" -> "584-8609AIMSE16#PBF". Stops at the first word that isn't part-number-like. */
+    static String joinPnFragments(String s) {
+        String[] toks = s.trim().toUpperCase(Locale.US).split("\\s+");
+        StringBuilder sb = new StringBuilder(toks[0]);
+        for (int i = 1; i < toks.length; i++) {
+            String t = toks[i];
+            if (!t.matches("[A-Z0-9\\-./+#]+") || t.matches("(QTY|COO|CUST|DESC|ROHS|PO|LINE|ITEM)")) break;
+            sb.append(t);
+        }
+        return cleanPn(sb.toString());
+    }
 
     /** Alt PN cells sometimes say "Too Many, See BOM". Only accept something that looks like a part number. */
     static String validMpn(String s, String customerPn) {

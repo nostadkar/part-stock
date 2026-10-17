@@ -8,7 +8,7 @@ Label types it understands:
 | Label | Fields read |
 |---|---|
 | **DigiKey** | Part Number (‑ND), Manufacturer Part Number, Part Description, Manufacturer, Quantity, Customer Reference, Date Code, Purchase Order |
-| **Mouser** | P/N, Cust P/N, Desc, manufacturer + category line, QTY, COO, Cust PO. The MPN is worked out by dropping Mouser's numeric prefix (`798-DF11-12DP-2DS24` → `DF11-12DP-2DS24`) and flagged for you to check. |
+| **Mouser** | P/N, Cust P/N, Desc, manufacturer + category line, QTY, COO, Cust PO. The MPN is worked out by dropping Mouser's numeric prefix (`798-DF11-12DP-2DS24` → `DF11-12DP-2DS24`) and flagged for you to check. It can be wrong (Mouser drops some makers' prefixes, e.g. `584-8609AIMSE16#PBF` is really `LT8609AIMSE16#PBF`), so use "Look up price on Mouser" to get the real MPN. |
 | **Entrust kit** | PN (customer PN), Alt PN (MPN), Desc, Qty (per board), kit Qty from the header, REF DES list, item number |
 
 | **MyData sticker** | Component (customer PN) and Comment (description) |

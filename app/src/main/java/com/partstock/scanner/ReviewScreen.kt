@@ -47,6 +47,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.partstock.scanner.parse.Links
 import com.partstock.scanner.parse.ParsedPart
+import com.partstock.scanner.parse.PartNumberVariants
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -109,21 +110,36 @@ fun ReviewScreen(
             looking = true
             lookupMsg = null
             try {
-                val r = MouserApi.lookup(key, pn, q)
+                var found = MouserApi.lookup(key, pn, q)
+                var fixedFrom: String? = null
+                if (found == null) {
+                    // The label font makes OCR swap look-alikes (I/1/L, O/0); retry one swap at a time.
+                    for (v in PartNumberVariants.confusions(pn, 12)) {
+                        val hit = MouserApi.lookup(key, v, q, exactOnly = true)
+                        if (hit != null) {
+                            found = hit
+                            fixedFrom = pn
+                            break
+                        }
+                    }
+                }
+                val r = found
                 if (r == null) {
                     lookupMsg = "Mouser has no exact match for $pn."
                 } else {
                     if (r.unitPrice != null) unitCost = InventoryDb.fmtCost(r.unitPrice)
                     if (r.url.isNotBlank()) apiUrl = r.url
+                    if (part.distributor == ParsedPart.MOUSER && r.mouserPn.isNotBlank()) distributorPn = r.mouserPn
                     if (description.isBlank() && r.description.isNotBlank()) description = r.description
                     if (manufacturer.isBlank() && r.manufacturer.isNotBlank()) manufacturer = r.manufacturer
                     // A part number worked out from the label can be off by an OCR slip; Mouser's is exact.
                     if ((mpn.isBlank() || part.mpnDerived) && r.mpn.isNotBlank()) mpn = r.mpn
-                    lookupMsg = if (r.unitPrice != null) {
+                    val base = if (r.unitPrice != null) {
                         "Mouser: ${r.currency} ${InventoryDb.fmtCost(r.unitPrice)} each at ${r.priceAtQty}+"
                     } else {
                         "Found on Mouser, but no price listed."
                     }
+                    lookupMsg = if (fixedFrom != null) "$base. Fixed a likely misread: $fixedFrom → ${r.mouserPn}" else base
                 }
             } catch (e: MouserException) {
                 lookupMsg = e.message

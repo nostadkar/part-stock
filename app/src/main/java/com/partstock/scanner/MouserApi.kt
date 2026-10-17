@@ -27,7 +27,12 @@ object MouserApi {
     private const val ENDPOINT = "https://api.mouser.com/api/v1/search/partnumber"
 
     /** Finds [partNumber] (a Mouser part number or a manufacturer part number). Null if no exact match. */
-    suspend fun lookup(apiKey: String, partNumber: String, qty: Int): MouserPart? = withContext(Dispatchers.IO) {
+    suspend fun lookup(
+        apiKey: String,
+        partNumber: String,
+        qty: Int,
+        exactOnly: Boolean = false,
+    ): MouserPart? = withContext(Dispatchers.IO) {
         val conn = URL("$ENDPOINT?apiKey=" + URLEncoder.encode(apiKey, "UTF-8")).openConnection() as HttpURLConnection
         try {
             conn.requestMethod = "POST"
@@ -49,13 +54,13 @@ object MouserApi {
                 code == 429 -> throw MouserException("Mouser rate limit reached. Try again in a minute.")
                 code !in 200..299 -> throw MouserException("Mouser error (HTTP $code).")
             }
-            parse(text, partNumber, qty)
+            parse(text, partNumber, qty, exactOnly)
         } finally {
             conn.disconnect()
         }
     }
 
-    internal fun parse(text: String, wanted: String, qty: Int): MouserPart? {
+    internal fun parse(text: String, wanted: String, qty: Int, exactOnly: Boolean = false): MouserPart? {
         val json = JSONObject(text)
         val errors = json.optJSONArray("Errors")
         if (errors != null && errors.length() > 0) {
@@ -75,7 +80,7 @@ object MouserApi {
                 break
             }
         }
-        if (pick == null && parts.length() == 1) pick = parts.getJSONObject(0)
+        if (pick == null && parts.length() == 1 && !exactOnly) pick = parts.getJSONObject(0)
         val o = pick ?: return null
 
         var price: Double? = null

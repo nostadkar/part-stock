@@ -108,7 +108,7 @@ public class LabelParserTest {
                 .add("811650-101", 708, 715, 920, 765)
                 .add("Comment:", 713, 795, 840, 820)
                 .add("IC, SMPS, BUCK,SS, 2A,42V,", 713, 812, 1180, 845)
-                .add("P/N: 584-8609A1MSE16#PBF", 215, 800, 550, 822)
+                .add("P/N: 584-8609AIMSE16#PBF", 215, 800, 550, 822)
                 .add("Batch:", 720, 872, 798, 895)
                 .add("MYDATA", 998, 870, 1195, 905)
                 .add("Cust P/N: 811650 101", 215, 876, 495, 896)
@@ -240,8 +240,8 @@ public class LabelParserTest {
         ParsedPart p = LabelParser.parse(multiLabelBag());
         assertEquals("Mouser + Entrust kit + MyData", p.labelType);
         assertEquals(ParsedPart.MOUSER, p.distributor);
-        assertEquals("584-8609A1MSE16#PBF", p.distributorPn);
-        assertEquals("8609A1MSE16#PBF", p.mpn);
+        assertEquals("584-8609AIMSE16#PBF", p.distributorPn);
+        assertEquals("8609AIMSE16#PBF", p.mpn);
         assertTrue(p.mpnDerived);
         assertEquals("811650-101", p.customerPn);
         assertEquals("IC, SMPS, BUCK,SS, 2A,42V, MSOP", p.description);
@@ -275,12 +275,34 @@ public class LabelParserTest {
 
     @Test
     public void productLinks() {
-        assertEquals("https://www.mouser.com/ProductDetail/584-8609A1MSE16%23PBF",
-                Links.productUrl("Mouser", "584-8609A1MSE16#PBF", "8609A1MSE16#PBF"));
+        assertEquals("https://www.mouser.com/ProductDetail/584-8609AIMSE16%23PBF",
+                Links.productUrl("Mouser", "584-8609AIMSE16#PBF", "8609AIMSE16#PBF"));
         assertEquals("https://www.digikey.com/en/products/result?keywords=2SK3019-TPMSCT-ND",
                 Links.productUrl("DigiKey", "2SK3019-TPMSCT-ND", "2SK3019-TP"));
         assertEquals("https://www.mouser.com/c/?q=2SK3019-TP", Links.productUrl(null, null, "2SK3019-TP"));
         assertNull(Links.productUrl(null, null, null));
         assertEquals("Mouser", Links.siteName("https://www.mouser.com/ProductDetail/x"));
+    }
+
+    @Test
+    public void mouserPnSplitByOcrGap() {
+        // The dot-matrix font leaves a gap that OCR turns into a space, and I can be read as L.
+        List<OcrLine> l = new Lines()
+                .add("MOUSER ELECTRONICS", 290, 588, 440, 632)
+                .add("P/N: 584-8609AIMSE 16#PBF", 215, 800, 600, 822)
+                .add("Desc: 42V, 2A/3A Peak Sync", 212, 945, 585, 968)
+                .add("QTY: 10", 205, 1040, 300, 1062)
+                .list;
+        ParsedPart p = LabelParser.parse(l);
+        assertEquals("584-8609AIMSE16#PBF", p.distributorPn);
+        assertEquals(Integer.valueOf(10), p.quantity);
+    }
+
+    @Test
+    public void lookAlikeVariantsFindTheRealNumber() {
+        List<String> v = PartNumberVariants.confusions("584-8609ALMSE16#PBF", 12);
+        assertTrue(v.contains("584-8609AIMSE16#PBF"));
+        assertEquals(8, v.size());
+        assertTrue(!v.contains("584-8609ALMSE16#PBF"));
     }
 }
