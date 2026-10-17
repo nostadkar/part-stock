@@ -5,6 +5,7 @@ public final class ParsedPart {
     public static final String DIGIKEY = "DigiKey";
     public static final String MOUSER = "Mouser";
     public static final String ENTRUST = "Entrust kit";
+    public static final String MYDATA = "MyData";
     public static final String UNKNOWN = "Unknown";
 
     public String labelType = UNKNOWN;
@@ -22,6 +23,8 @@ public final class ParsedPart {
     public Integer quantity;
     /** Entrust only: number of kits/boards in the header ("Qty 15"). */
     public Integer kitQuantity;
+    /** Entrust only: pieces of this part per board (the table's Qty cell). */
+    public Integer kitPerBoard;
     public String dateCode;
     public String refDes;
     public int refDesCount;

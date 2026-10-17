@@ -94,6 +94,48 @@ public class LabelParserTest {
                 .list;
     }
 
+    /** One bag with a Mouser label, a MyData sticker and an Entrust kit label all stuck on together. */
+    static List<OcrLine> multiLabelBag() {
+        return new Lines()
+                .add("MOUSER", 290, 588, 440, 612)
+                .add("ELECTRONICS", 290, 612, 440, 632)
+                .add("WWW.MOUS", 565, 590, 680, 610)
+                .add("Carrier: 053716", 697, 520, 900, 550)
+                .add("9/2/2026 4 11 29 AM", 965, 535, 1155, 555)
+                .add("Cust PO: 10491550", 220, 652, 455, 675)
+                .add("Line Item: 028", 220, 727, 415, 750)
+                .add("Component:", 707, 690, 858, 718)
+                .add("811650-101", 708, 715, 920, 765)
+                .add("Comment:", 713, 795, 840, 820)
+                .add("IC, SMPS, BUCK,SS, 2A,42V,", 713, 812, 1180, 845)
+                .add("P/N: 584-8609A1MSE16#PBF", 215, 800, 550, 822)
+                .add("Batch:", 720, 872, 798, 895)
+                .add("MYDATA", 998, 870, 1195, 905)
+                .add("Cust P/N: 811650 101", 215, 876, 495, 896)
+                .add("Desc: 42V, 2A/3A Peak Sync", 212, 945, 585, 968)
+                .add("Analog Devices Inc.  Switching Voltage Regulators", 210, 972, 915, 998)
+                .add("RoHS: compliant", 208, 1005, 420, 1027)
+                .add("QTY: 10", 205, 1040, 300, 1062)
+                .add("COO: MY", 450, 1038, 550, 1058)
+                .add("2H", 705, 1020, 960, 1115)
+                .add("260699 Entrust SH 536966-001 Rev 1 Qty 6", 675, 1170, 1195, 1190)
+                .add("Item", 575, 1205, 640, 1225)
+                .add("33", 760, 1205, 790, 1225)
+                .add("PN", 800, 1205, 835, 1225)
+                .add("811650-101", 970, 1200, 1080, 1222)
+                .add("Alt PN", 575, 1232, 640, 1254)
+                .add("Too Many, See Dimation BOM", 795, 1230, 1070, 1250)
+                .add("Desc", 575, 1262, 640, 1284)
+                .add("IC, SMPS, BUCK,SS, 2A,42V, MSOP", 770, 1258, 1100, 1280)
+                .add("REF DES", 720, 1290, 820, 1310)
+                .add("Qty", 990, 1285, 1045, 1305)
+                .add("1", 1125, 1285, 1140, 1305)
+                .add("U1", 850, 1320, 880, 1340)
+                .add("Invoice No.: 091886942", 193, 1285, 512, 1307)
+                .add("Kit Label MFG-FRM-017 Rev - 11-20-14", 570, 1350, 860, 1368)
+                .list;
+    }
+
     @Test
     public void digiKeyLabel() {
         ParsedPart p = LabelParser.parse(digiKey());
@@ -191,5 +233,54 @@ public class LabelParserTest {
         assertEquals("811755-101", p.inventoryKey());
         p.mpn = "2SK3019-TP";
         assertEquals("2SK3019-TP", p.inventoryKey());
+    }
+
+    @Test
+    public void multiLabelBagMergesIntoOnePart() {
+        ParsedPart p = LabelParser.parse(multiLabelBag());
+        assertEquals("Mouser + Entrust kit + MyData", p.labelType);
+        assertEquals(ParsedPart.MOUSER, p.distributor);
+        assertEquals("584-8609A1MSE16#PBF", p.distributorPn);
+        assertEquals("8609A1MSE16#PBF", p.mpn);
+        assertTrue(p.mpnDerived);
+        assertEquals("811650-101", p.customerPn);
+        assertEquals("IC, SMPS, BUCK,SS, 2A,42V, MSOP", p.description);
+        assertEquals("Analog Devices Inc.", p.manufacturer);
+        // The bag holds 10; the kit table's Qty of 1 is per board and must not replace it.
+        assertEquals(Integer.valueOf(10), p.quantity);
+        assertEquals(Integer.valueOf(1), p.kitPerBoard);
+        assertEquals(Integer.valueOf(6), p.kitQuantity);
+        assertEquals("U1", p.refDes);
+        assertEquals(1, p.refDesCount);
+        assertEquals("Switching Voltage Regulators; COO MY; PO 10491550; "
+                + "Kit 260699 Entrust SH 536966-001 Rev 1; item 33", p.notes);
+    }
+
+    @Test
+    public void myDataStickerAlone() {
+        List<OcrLine> l = new Lines()
+                .add("Carrier: 053716", 697, 520, 900, 550)
+                .add("Component:", 707, 690, 858, 718)
+                .add("811650-101", 708, 715, 920, 765)
+                .add("Comment:", 713, 795, 840, 820)
+                .add("IC, SMPS, BUCK,SS, 2A,42V,", 713, 812, 1180, 845)
+                .add("Batch:", 720, 872, 798, 895)
+                .add("MYDATA", 998, 870, 1195, 905)
+                .list;
+        ParsedPart p = LabelParser.parse(l);
+        assertEquals(ParsedPart.MYDATA, p.labelType);
+        assertEquals("811650-101", p.customerPn);
+        assertEquals("IC, SMPS, BUCK,SS, 2A,42V", p.description);
+    }
+
+    @Test
+    public void productLinks() {
+        assertEquals("https://www.mouser.com/ProductDetail/584-8609A1MSE16%23PBF",
+                Links.productUrl("Mouser", "584-8609A1MSE16#PBF", "8609A1MSE16#PBF"));
+        assertEquals("https://www.digikey.com/en/products/result?keywords=2SK3019-TPMSCT-ND",
+                Links.productUrl("DigiKey", "2SK3019-TPMSCT-ND", "2SK3019-TP"));
+        assertEquals("https://www.mouser.com/c/?q=2SK3019-TP", Links.productUrl(null, null, "2SK3019-TP"));
+        assertNull(Links.productUrl(null, null, null));
+        assertEquals("Mouser", Links.siteName("https://www.mouser.com/ProductDetail/x"));
     }
 }

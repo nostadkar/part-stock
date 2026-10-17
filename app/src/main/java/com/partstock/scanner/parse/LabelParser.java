@@ -62,9 +62,19 @@ public final class LabelParser {
     private static final Field EN_DESC = new Field("DESC(?:RIPTION)?", Kind.TEXT);
     private static final Field EN_QTY = new Field("QTY", Kind.QTY);
 
+    // MyData (Mydata pick-and-place) sticker
+    private static final Field MD_COMPONENT = new Field("COMPONENT", Kind.PN);
+    private static final Field MD_COMMENT = new Field("COMMENT", Kind.TEXT);
+    private static final Field MD_BATCH = new Field("BATCH", Kind.TEXT);
+
     private static final List<Field> ALL_FIELDS = Arrays.asList(
             DK_PN, DK_MPN, DK_DESC, DK_MFR, DK_QTY, DK_CREF, DK_DATE, DK_PO,
-            EN_ITEM, EN_PN, EN_ALT, EN_DESC, EN_QTY);
+            EN_ITEM, EN_PN, EN_ALT, EN_DESC, EN_QTY, MD_COMPONENT, MD_COMMENT, MD_BATCH);
+
+    private static final Pattern MY_ANCHOR = Pattern.compile(
+            "^[^A-Z0-9]*(?:CARRIER|COMPONENT|COMMENT|BATCH|MYDATA)\\b", CI);
+    private static final Pattern CORP_SUFFIX = Pattern.compile(
+            "^(INC\\.?|CORP\\.?|CORPORATION|LTD\\.?|LLC|GMBH|CO\\.?|AG|PLC)(?:\\s+|$)", CI);
 
     /** Other field names that must never be taken as a value. */
     private static final Pattern OTHER_LABELS = Pattern.compile(
@@ -75,7 +85,7 @@ public final class LabelParser {
     private static final Pattern MO_PN = Pattern.compile(
             "^[^A-Z0-9]*(?:MOUSER\\s*)?P\\s*/?\\s*N\\s*[:.;]?\\s*([A-Z0-9][A-Z0-9\\-./+#]*)", CI);
     private static final Pattern MO_CUST_PN = Pattern.compile(
-            "[A-Z]{2,5}\\.?\\s*P\\s*/\\s*N\\s*[:.;]?\\s*([A-Z0-9][A-Z0-9\\-./+#]*)", CI);
+            "[A-Z]{2,5}\\.?\\s*P\\s*/\\s*N\\s*[:.;]?\\s*([A-Z0-9][A-Z0-9\\-./+# ]*)", CI);
     private static final Pattern MO_DESC = Pattern.compile("^[^A-Z0-9]*DESC\\w*\\s*[:.;]?\\s*([A-Z0-9].*)$", CI);
     private static final Pattern MO_QTY = Pattern.compile("(?<![A-Z0-9])QTY\\s*[:.;]?\\s*([0-9OoIl|,]+)", CI);
     private static final Pattern MO_COO = Pattern.compile("(?<![A-Z0-9])COO\\s*[:.;]?\\s*([A-Z]{2,})", CI);
@@ -114,26 +124,172 @@ public final class LabelParser {
         p.rawText = raw.toString().trim();
         String all = p.rawText.toUpperCase(Locale.US);
 
-        if (all.contains("ENTRUST") || all.matches("(?s).*ALT\\.?\\s*P\\s?/?\\s?N.*")
-                || all.matches("(?s).*REF\\s*DES.*") || all.contains("KIT LABEL")) {
-            p.labelType = ParsedPart.ENTRUST;
-            parseEntrust(lines, p);
-        } else if (all.contains("MOUSER")) {
-            p.labelType = ParsedPart.MOUSER;
-            parseMouser(lines, p);
+        // A bag can carry several labels (distributor label, Entrust kit label, MyData sticker),
+        // often stuck over one another. Cut the stickers out by position, parse each separately, then merge.
+        List<OcrLine> kitLines = new ArrayList<>();
+        List<OcrLine> myLines = new ArrayList<>();
+        List<OcrLine> baseLines = new ArrayList<>();
+        carve(lines, kitLines, myLines, baseLines);
+
+        ParsedPart base = parseBase(baseLines);
+        ParsedPart kit = null;
+        ParsedPart my = null;
+        if (!kitLines.isEmpty()) {
+            kit = new ParsedPart();
+            parseEntrust(kitLines, kit);
+        }
+        if (!myLines.isEmpty()) {
+            my = new ParsedPart();
+            parseMyData(myLines, my);
+        }
+
+        if (base == null && kit == null && my == null) {
+            // No vendor label recognised by position; fall back to whole-photo guesses.
+            if (all.contains("ENTRUST") || all.matches("(?s).*ALT\\.?\\s*P\\s?/?\\s?N.*")
+                    || all.matches("(?s).*REF\\s*DES.*") || all.contains("KIT LABEL")) {
+                kit = new ParsedPart();
+                parseEntrust(lines, kit);
+            } else {
+                parseUnknown(lines, p);
+                return p;
+            }
+        }
+
+        List<String> types = new ArrayList<>();
+        if (base != null) types.add(base.labelType);
+        if (kit != null) types.add(ParsedPart.ENTRUST);
+        if (my != null) types.add(ParsedPart.MYDATA);
+        p.labelType = String.join(" + ", types);
+
+        List<String> notes = new ArrayList<>();
+        if (base != null) {
+            p.distributor = base.distributor;
+            p.mpn = base.mpn;
+            p.mpnDerived = base.mpnDerived;
+            p.distributorPn = base.distributorPn;
+            p.customerPn = base.customerPn;
+            p.description = base.description;
+            p.manufacturer = base.manufacturer;
+            p.quantity = base.quantity;
+            p.dateCode = base.dateCode;
+            if (base.notes != null) notes.add(base.notes);
+        }
+        if (kit != null) {
+            p.kitQuantity = kit.kitQuantity;
+            p.kitPerBoard = kit.quantity;
+            p.refDes = kit.refDes;
+            p.refDesCount = kit.refDesCount;
+            if (kit.customerPn != null) p.customerPn = kit.customerPn;
+            if (kit.mpn != null) {
+                p.mpn = kit.mpn;
+                p.mpnDerived = false;
+            }
+            if (kit.description != null) p.description = kit.description; // fuller than distributor text
+            // The distributor label's quantity is what is in the bag; the kit Qty is per board.
+            if (base == null) p.quantity = kit.quantity;
+            if (kit.notes != null) notes.add(kit.notes);
+        }
+        if (my != null) {
+            if (p.customerPn == null) p.customerPn = my.customerPn;
+            if (p.description == null) p.description = my.description;
+        }
+        p.notes = notes.isEmpty() ? null : String.join("; ", notes);
+        return p;
+    }
+
+    // ---------------------------------------------------------------- splitting one photo into labels
+
+    private static void carve(List<OcrLine> lines, List<OcrLine> kit, List<OcrLine> my, List<OcrLine> base) {
+        int[] kitBox = kitBox(lines);
+        int[] myBox = myDataBox(lines);
+        for (OcrLine l : lines) {
+            double cx = (l.left + l.right) / 2.0;
+            double cy = l.centerY();
+            if (kitBox != null && inside(kitBox, cx, cy)) kit.add(l);
+            else if (myBox != null && inside(myBox, cx, cy)) my.add(l);
+            else base.add(l);
+        }
+    }
+
+    private static boolean inside(int[] box, double x, double y) {
+        return x >= box[0] && x <= box[2] && y >= box[1] && y <= box[3];
+    }
+
+    /** The Entrust table runs from its title bar ("... Entrust SH ... Qty 6") down to the "Kit Label" footer. */
+    private static int[] kitBox(List<OcrLine> lines) {
+        OcrLine header = null;
+        for (OcrLine l : lines) {
+            if (l.text.toUpperCase(Locale.US).contains("ENTRUST")) {
+                header = l;
+                break;
+            }
+        }
+        if (header == null) return null;
+        int bottom = header.bottom + 12 * header.height();
+        for (OcrLine l : lines) {
+            if (l.top > header.top && l.text.toUpperCase(Locale.US).contains("KIT LABEL")
+                    && l.left < header.right && l.right > header.left) {
+                bottom = l.bottom + 6;
+                break;
+            }
+        }
+        int pad = header.width() / 4;
+        return new int[]{header.left - pad, header.top - 4, header.right + pad, bottom};
+    }
+
+    /** The MyData sticker: "Carrier / Component / Comment / Batch" with a MYDATA logo. */
+    private static int[] myDataBox(List<OcrLine> lines) {
+        boolean logo = false, carrier = false, component = false;
+        int l = Integer.MAX_VALUE, t = Integer.MAX_VALUE, r = Integer.MIN_VALUE, b = Integer.MIN_VALUE;
+        for (OcrLine ln : lines) {
+            String u = ln.text.toUpperCase(Locale.US);
+            if (u.contains("MYDATA")) logo = true;
+            if (u.startsWith("CARRIER")) carrier = true;
+            if (u.startsWith("COMPONENT")) component = true;
+            if (MY_ANCHOR.matcher(ln.text).find()) {
+                l = Math.min(l, ln.left);
+                t = Math.min(t, ln.top);
+                r = Math.max(r, ln.right);
+                b = Math.max(b, ln.bottom);
+            }
+        }
+        if (!(logo || (carrier && component)) || l == Integer.MAX_VALUE) return null;
+        int pad = 15;
+        return new int[]{l - pad, t - pad, r + pad, b + pad};
+    }
+
+    private static ParsedPart parseBase(List<OcrLine> lines) {
+        if (lines.isEmpty()) return null;
+        StringBuilder sb = new StringBuilder();
+        for (OcrLine l : lines) sb.append(l.text).append('\n');
+        String all = sb.toString().toUpperCase(Locale.US);
+        ParsedPart b = new ParsedPart();
+        if (all.contains("MOUSER")) {
+            b.labelType = ParsedPart.MOUSER;
+            parseMouser(lines, b);
         } else if (all.contains("DIGIKEY") || all.contains("DIGI-KEY") || all.contains("DIGI KEY")
                 || ND_TOKEN.matcher(all).find() || all.contains("PART DESCRIPTION")
                 || all.contains("MANUFACTURER PART")) {
-            p.labelType = ParsedPart.DIGIKEY;
-            parseDigiKey(lines, p);
+            b.labelType = ParsedPart.DIGIKEY;
+            parseDigiKey(lines, b);
         } else if (Pattern.compile("^[^A-Z0-9]*P\\s*/\\s*N\\s*:", CI | Pattern.MULTILINE).matcher(all).find()
                 && all.contains("DESC")) {
-            p.labelType = ParsedPart.MOUSER;
-            parseMouser(lines, p);
+            b.labelType = ParsedPart.MOUSER;
+            parseMouser(lines, b);
         } else {
-            parseUnknown(lines, p);
+            return null;
         }
-        return p;
+        boolean useful = b.distributorPn != null || b.mpn != null || b.description != null;
+        return useful ? b : null;
+    }
+
+    private static void parseMyData(List<OcrLine> lines, ParsedPart p) {
+        Set<OcrLine> none = Collections.emptySet();
+        p.customerPn = extract(MD_COMPONENT, lines, Dir.BELOW, none);
+        String comment = extract(MD_COMMENT, lines, Dir.BELOW, none);
+        // The sticker cuts long comments off mid-list, so drop a dangling comma.
+        if (comment != null) comment = comment.replaceAll("[,\\s]+$", "");
+        p.description = upper(comment);
     }
 
     // ---------------------------------------------------------------- label types
@@ -169,7 +325,7 @@ public final class LabelParser {
                 continue;
             }
             if (p.customerPn == null && (m = MO_CUST_PN.matcher(t)).find()) {
-                p.customerPn = cleanPn(m.group(1));
+                p.customerPn = normalizeCustPn(m.group(1));
                 continue;
             }
             if (p.description == null && (m = MO_DESC.matcher(t)).find()) {
@@ -224,6 +380,7 @@ public final class LabelParser {
         }
         p.customerPn = extract(EN_PN, lines, Dir.RIGHT, header);
         p.mpn = extract(EN_ALT, lines, Dir.RIGHT, header);
+        p.mpn = validMpn(p.mpn, p.customerPn);
         p.description = upper(extract(EN_DESC, lines, Dir.RIGHT, header));
         p.quantity = toInt(extract(EN_QTY, lines, Dir.RIGHT, header));
         Integer item = toInt(extract(EN_ITEM, lines, Dir.RIGHT, header));
@@ -233,7 +390,9 @@ public final class LabelParser {
             String[] toks = l.text.trim().split("[\\s,;]+");
             int hits = 0;
             for (String t : toks) if (REFDES_TOKEN.matcher(t).matches()) hits++;
-            if (toks.length >= 2 && hits >= Math.ceil(toks.length * 0.8)) {
+            boolean row = toks.length >= 2 && hits >= Math.ceil(toks.length * 0.8);
+            boolean single = toks.length == 1 && hits == 1;
+            if (row || single) {
                 for (String t : toks) if (REFDES_TOKEN.matcher(t).matches()) refs.add(t.toUpperCase(Locale.US));
             }
         }
@@ -377,6 +536,22 @@ public final class LabelParser {
 
     // ---------------------------------------------------------------- cleanup helpers
 
+    /** Alt PN cells sometimes say "Too Many, See BOM". Only accept something that looks like a part number. */
+    static String validMpn(String s, String customerPn) {
+        String t = cleanPn(s);
+        if (t == null || t.length() < 3 || !t.matches(".*\\d.*")) return null;
+        if (t.equalsIgnoreCase(customerPn)) return null;
+        return t;
+    }
+
+    /** Entrust-style customer PNs are 6+3 digits; OCR often drops the dash ("811650 101"). */
+    static String normalizeCustPn(String s) {
+        String t = s.trim().toUpperCase(Locale.US);
+        Matcher m = Pattern.compile("^(\\d{6})[\\s-]+(\\d{3})(?![0-9A-Z])").matcher(t);
+        if (m.find()) return m.group(1) + "-" + m.group(2);
+        return cleanPn(t);
+    }
+
     static String cleanPn(String s) {
         if (s == null) return null;
         String t = s.toUpperCase(Locale.US).replaceAll("\\s*-\\s*", "-").trim();
@@ -406,14 +581,26 @@ public final class LabelParser {
     static String[] splitMaker(String line) {
         String t = line.replaceAll("\\s+", " ").trim();
         String up = t.toUpperCase(Locale.US);
-        for (String maker : MULTI_WORD_MAKERS) {
-            if (up.startsWith(maker + " ") || up.equals(maker)) {
-                String rest = t.substring(maker.length()).trim();
-                return new String[]{t.substring(0, maker.length()), rest.isEmpty() ? null : rest};
+        String maker = null;
+        String rest = null;
+        for (String m : MULTI_WORD_MAKERS) {
+            if (up.startsWith(m + " ") || up.equals(m)) {
+                maker = t.substring(0, m.length());
+                rest = t.substring(m.length()).trim();
+                break;
             }
         }
-        int sp = t.indexOf(' ');
-        if (sp < 0) return new String[]{t, null};
-        return new String[]{t.substring(0, sp), t.substring(sp + 1).trim()};
+        if (maker == null) {
+            int sp = t.indexOf(' ');
+            if (sp < 0) return new String[]{t, null};
+            maker = t.substring(0, sp);
+            rest = t.substring(sp + 1).trim();
+        }
+        Matcher m = CORP_SUFFIX.matcher(rest);
+        if (m.find()) {
+            maker = maker + " " + m.group(1);
+            rest = rest.substring(m.end()).trim();
+        }
+        return new String[]{maker, rest.isEmpty() ? null : rest};
     }
 }
