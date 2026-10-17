@@ -110,22 +110,27 @@ fun ReviewScreen(
             looking = true
             lookupMsg = null
             try {
-                var found = MouserApi.lookup(key, pn, q)
-                var fixedFrom: String? = null
+                // 1. As read, accepting the nearest result if one or two characters were misread.
+                var found = MouserApi.lookup(key, pn, q, maxDistance = 2)
+                // 2. Mouser may not list near-misses for a wrong number, so search on the start of it
+                //    (misreads at the end, like #PBE for #PBF, are common) and pick the nearest.
                 if (found == null) {
-                    // The label font makes OCR swap look-alikes (I/1/L, O/0); retry one swap at a time.
+                    val stem = pn.substringBefore('#').let { if (it.length < pn.length) it else pn.dropLast(3) }
+                    if (stem.length >= 6) found = MouserApi.lookup(key, stem, q, wanted = pn, maxDistance = 2)
+                }
+                // 3. Swap look-alike characters (I/1/L, O/0, E/F...) one at a time.
+                if (found == null) {
                     for (v in PartNumberVariants.confusions(pn, 12)) {
-                        val hit = MouserApi.lookup(key, v, q, exactOnly = true)
-                        if (hit != null) {
-                            found = hit
-                            fixedFrom = pn
-                            break
-                        }
+                        found = MouserApi.lookup(key, v, q) ?: continue
+                        break
                     }
                 }
                 val r = found
+                val fixedFrom = if (r != null && r.mouserPn.isNotBlank() &&
+                    PartNumberVariants.distance(r.mouserPn, pn) > 0 &&
+                    PartNumberVariants.distance(r.mpn, pn) > 0) pn else null
                 if (r == null) {
-                    lookupMsg = "Mouser has no exact match for $pn."
+                    lookupMsg = "Mouser has no match for $pn. Check the number against the label and try again."
                 } else {
                     if (r.unitPrice != null) unitCost = InventoryDb.fmtCost(r.unitPrice)
                     if (r.url.isNotBlank()) apiUrl = r.url

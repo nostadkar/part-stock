@@ -561,6 +561,12 @@ public final class LabelParser {
     /** Entrust-style customer PNs are 6+3 digits; OCR often drops the dash ("811650 101"). */
     static String normalizeCustPn(String s) {
         String t = s.trim().toUpperCase(Locale.US);
+        // OCR also splits the digits themselves ("81 1650 101"): join digit-only groups first.
+        Matcher d = Pattern.compile("^([0-9][0-9\\s-]*[0-9])(?![0-9A-Z])").matcher(t);
+        if (d.find()) {
+            String digits = d.group(1).replaceAll("[\\s-]", "");
+            if (digits.length() == 9) return digits.substring(0, 6) + "-" + digits.substring(6);
+        }
         Matcher m = Pattern.compile("^(\\d{6})[\\s-]+(\\d{3})(?![0-9A-Z])").matcher(t);
         if (m.find()) return m.group(1) + "-" + m.group(2);
         return cleanPn(t);

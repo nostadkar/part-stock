@@ -302,7 +302,20 @@ public class LabelParserTest {
     public void lookAlikeVariantsFindTheRealNumber() {
         List<String> v = PartNumberVariants.confusions("584-8609ALMSE16#PBF", 12);
         assertTrue(v.contains("584-8609AIMSE16#PBF"));
-        assertEquals(8, v.size());
+        assertEquals(12, v.size());
         assertTrue(!v.contains("584-8609ALMSE16#PBF"));
+    }
+
+    @Test
+    public void closestMouserResultFixesOneMisreadLetter() {
+        List<String> results = java.util.Arrays.asList("584-8609AIMSE16#TRPBF", "584-8609AIMSE16#PBF", "584-8609BIMSE16#PBF");
+        assertEquals(1, PartNumberVariants.closest(results, "584-8609AIMSE16#PBE", 2));
+        assertEquals(-1, PartNumberVariants.closest(java.util.Arrays.asList("595-LM358DR"), "584-8609AIMSE16#PBE", 2));
+    }
+
+    @Test
+    public void custPnDigitsSplitByOcr() {
+        assertEquals("811650-101", LabelParser.normalizeCustPn("81 1650 101"));
+        assertEquals("811650-101", LabelParser.normalizeCustPn("811650 101"));
     }
 }

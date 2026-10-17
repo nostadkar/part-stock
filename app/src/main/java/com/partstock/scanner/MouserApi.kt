@@ -2,6 +2,7 @@ package com.partstock.scanner
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.partstock.scanner.parse.PartNumberVariants
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -26,12 +27,16 @@ class MouserException(message: String) : Exception(message)
 object MouserApi {
     private const val ENDPOINT = "https://api.mouser.com/api/v1/search/partnumber"
 
-    /** Finds [partNumber] (a Mouser part number or a manufacturer part number). Null if no exact match. */
+    /**
+     * Searches Mouser for [partNumber] and returns the result matching [wanted] (a Mouser or manufacturer part
+     * number) exactly, or else the one within [maxDistance] characters of it (fixes OCR slips like PBE → PBF).
+     */
     suspend fun lookup(
         apiKey: String,
         partNumber: String,
         qty: Int,
-        exactOnly: Boolean = false,
+        wanted: String = partNumber,
+        maxDistance: Int = 0,
     ): MouserPart? = withContext(Dispatchers.IO) {
         val conn = URL("$ENDPOINT?apiKey=" + URLEncoder.encode(apiKey, "UTF-8")).openConnection() as HttpURLConnection
         try {
@@ -54,13 +59,13 @@ object MouserApi {
                 code == 429 -> throw MouserException("Mouser rate limit reached. Try again in a minute.")
                 code !in 200..299 -> throw MouserException("Mouser error (HTTP $code).")
             }
-            parse(text, partNumber, qty, exactOnly)
+            parse(text, wanted, qty, maxDistance)
         } finally {
             conn.disconnect()
         }
     }
 
-    internal fun parse(text: String, wanted: String, qty: Int, exactOnly: Boolean = false): MouserPart? {
+    internal fun parse(text: String, wanted: String, qty: Int, maxDistance: Int = 0): MouserPart? {
         val json = JSONObject(text)
         val errors = json.optJSONArray("Errors")
         if (errors != null && errors.length() > 0) {
@@ -80,7 +85,16 @@ object MouserApi {
                 break
             }
         }
-        if (pick == null && parts.length() == 1 && !exactOnly) pick = parts.getJSONObject(0)
+        if (pick == null && maxDistance > 0) {
+            // No exact hit: take the nearest Mouser part number, if it's clearly the nearest.
+            val pns = (0 until parts.length()).map { parts.getJSONObject(it).optString("MouserPartNumber") }
+            var i = PartNumberVariants.closest(pns, wanted, maxDistance)
+            if (i < 0) {
+                val mpns = (0 until parts.length()).map { parts.getJSONObject(it).optString("ManufacturerPartNumber") }
+                i = PartNumberVariants.closest(mpns, wanted, maxDistance)
+            }
+            if (i >= 0) pick = parts.getJSONObject(i)
+        }
         val o = pick ?: return null
 
         var price: Double? = null
