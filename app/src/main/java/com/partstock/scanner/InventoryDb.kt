@@ -5,6 +5,7 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import com.partstock.scanner.parse.Categories
 import com.partstock.scanner.parse.Links
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -30,6 +31,7 @@ data class PartRow(
     val updatedAt: String,
     val unitCost: Double?,
     val productUrl: String,
+    val category: String,
 )
 
 /** Saved link, or one built from the part numbers for rows saved before links existed. */
@@ -56,10 +58,13 @@ data class ScanEntry(
     val raw: String,
     val unitCost: Double?,
     val productUrl: String,
+    val category: String,
+    /** Description came from Mouser's listing, so it replaces the one saved from a label. */
+    val descriptionFromMouser: Boolean = false,
 )
 
 /** Inventory stored on the phone: one row per part, plus a log of every save. */
-class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 2) {
+class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 3) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -72,7 +77,8 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                 source TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
                 date_code TEXT NOT NULL DEFAULT '', ref_des TEXT NOT NULL DEFAULT '',
                 scans INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT '',
-                unit_cost REAL, product_url TEXT NOT NULL DEFAULT '')"""
+                unit_cost REAL, product_url TEXT NOT NULL DEFAULT '',
+                category TEXT NOT NULL DEFAULT '')"""
         )
         db.execSQL(
             """CREATE TABLE scan_log (
@@ -86,6 +92,16 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         if (oldVersion < 2) {
             db.execSQL("ALTER TABLE parts ADD COLUMN unit_cost REAL")
             db.execSQL("ALTER TABLE parts ADD COLUMN product_url TEXT NOT NULL DEFAULT ''")
+        }
+        if (oldVersion < 3) {
+            // Adds a column only; existing parts are sorted into buckets from their description.
+            db.execSQL("ALTER TABLE parts ADD COLUMN category TEXT NOT NULL DEFAULT ''")
+            val rows = db.rawQuery("SELECT id, description, notes FROM parts", null).use { c ->
+                buildList { while (c.moveToNext()) add(Triple(c.getLong(0), c.getString(1).orEmpty(), c.getString(2).orEmpty())) }
+            }
+            for ((id, desc, notes) in rows) {
+                db.execSQL("UPDATE parts SET category = ? WHERE id = ?", arrayOf(Categories.classify(desc, notes), id))
+            }
         }
     }
 
@@ -123,7 +139,9 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                     put("quantity", total)
                     // Fill blanks from this label without overwriting what's there.
                     fill("mpn", r.mpn, e.mpn)
-                    fill("description", r.description, e.description)
+                    if (e.descriptionFromMouser && e.description.isNotBlank()) put("description", e.description)
+                    else fill("description", r.description, e.description)
+                    if (e.category.isNotBlank()) put("category", e.category)
                     fill("manufacturer", r.manufacturer, e.manufacturer)
                     fill("distributor", r.distributor, e.distributor)
                     fill("distributor_pn", r.distributorPn, e.distributorPn)
@@ -148,7 +166,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                     put("distributor_pn", e.distributorPn); put("customer_pn", e.customerPn)
                     put("source", e.source); put("notes", e.notes); put("date_code", e.dateCode)
                     put("ref_des", e.refDes); put("scans", 1); put("updated_at", now)
-                    put("product_url", e.productUrl)
+                    put("product_url", e.productUrl); put("category", e.category)
                     if (e.unitCost != null) put("unit_cost", e.unitCost)
                 })
             }
@@ -168,13 +186,13 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
     }
 
     fun all(): List<PartRow> =
-        readableDatabase.rawQuery("SELECT * FROM parts ORDER BY UPPER(mpn), UPPER(customer_pn)", null).use { c ->
+        readableDatabase.rawQuery("SELECT * FROM parts ORDER BY category, UPPER(mpn), UPPER(customer_pn)", null).use { c ->
             buildList { while (c.moveToNext()) add(c.toRow()) }
         }
 
-    fun update(id: Long, quantity: Int, location: String, description: String, unitCost: Double?) {
+    fun update(id: Long, quantity: Int, location: String, description: String, unitCost: Double?, category: String) {
         val v = ContentValues().apply {
-            put("quantity", quantity); put("location", location.trim())
+            put("quantity", quantity); put("location", location.trim()); put("category", category)
             put("description", description.trim()); put("updated_at", now())
         }
         if (unitCost != null) v.put("unit_cost", unitCost) else v.putNull("unit_cost")
@@ -187,13 +205,13 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
 
     fun inventoryCsv(): String {
         val header = listOf(
-            "MPN", "Description", "Manufacturer", "Quantity", "Unit Cost", "Total Value", "Location",
+            "Category", "MPN", "Description", "Manufacturer", "Quantity", "Unit Cost", "Total Value", "Location",
             "Distributor", "Distributor PN", "Customer PN", "Link", "Source", "Notes", "Date Code", "Ref Des",
             "Scans", "Last Updated",
         )
         val rows = all().map {
             listOf(
-                it.mpn, it.description, it.manufacturer, it.quantity.toString(),
+                it.category, it.mpn, it.description, it.manufacturer, it.quantity.toString(),
                 it.unitCost?.let(::plain).orEmpty(),
                 it.unitCost?.let { c -> plain(c * it.quantity) }.orEmpty(),
                 it.location, it.distributor, it.distributorPn, it.customerPn, it.link(), it.source, it.notes,
@@ -235,6 +253,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             updatedAt = str("updated_at"),
             unitCost = if (isNull(costIdx)) null else getDouble(costIdx),
             productUrl = str("product_url"),
+            category = str("category").ifBlank { Categories.OTHER },
         )
     }
 

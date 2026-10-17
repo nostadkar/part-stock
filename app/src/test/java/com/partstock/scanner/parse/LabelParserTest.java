@@ -318,4 +318,24 @@ public class LabelParserTest {
         assertEquals("811650-101", LabelParser.normalizeCustPn("81 1650 101"));
         assertEquals("811650-101", LabelParser.normalizeCustPn("811650 101"));
     }
+
+    @Test
+    public void categories() {
+        assertEquals(Categories.POWER, Categories.classify("Switching Voltage Regulators", "42V, 2A/3A Peak Sync"));
+        assertEquals(Categories.POWER, Categories.classify("", "IC, SMPS, BUCK"));
+        assertEquals(Categories.TRANSISTORS, Categories.classify("MOSFET"));
+        assertEquals(Categories.TRANSISTORS, Categories.classify(null, "MOSFET N-CH 30V 200MA SOT-323"));
+        assertEquals(Categories.RESISTORS, Categories.classify("Thick Film Resistors - SMD"));
+        assertEquals(Categories.RESISTORS, Categories.classify("", "RES 10K OHM 1% 1/10W 0603"));
+        assertEquals(Categories.CAPACITORS, Categories.classify("Multilayer Ceramic Capacitors MLCC - SMD/SMT"));
+        assertEquals(Categories.CAPACITORS, Categories.classify("", "CAP CER 0.1UF 50V X7R 0603"));
+        assertEquals(Categories.INDUCTORS, Categories.classify("Fixed Inductors"));
+        assertEquals(Categories.PROTECTION, Categories.classify("ESD Suppressors / TVS Diodes"));
+        assertEquals(Categories.DIODES, Categories.classify("Schottky Diodes & Rectifiers"));
+        assertEquals(Categories.CONNECTORS, Categories.classify("Headers & Wire Housings"));
+        assertEquals(Categories.SWITCHES, Categories.classify("Tactile Switches"));
+        assertEquals(Categories.MCU, Categories.classify("ARM Microcontrollers - MCU"));
+        assertEquals(Categories.OTHER_ICS, Categories.classify("", "IC, SMP"));
+        assertEquals(Categories.OTHER, Categories.classify("", "BRACKET, STEEL"));
+    }
 }

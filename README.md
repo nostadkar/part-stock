@@ -38,6 +38,10 @@ To build locally instead: open the folder in Android Studio and press Run. Min A
 
 - Every part gets a link: Mouser labels open the Mouser product page, DigiKey labels open a DigiKey search for the
   part number. It is saved with the part and included in the CSV.
+- When the Mouser lookup finds the part, **Mouser's description replaces the label's** (also on the saved part).
+- **Categories**: every part goes in a bucket (Resistors, Capacitors, Transistors, Power ICs, Connectors…), taken from
+  Mouser's category when looked up, otherwise from the description. Change it with the Category button. The Inventory
+  screen groups by category with filter chips, and the CSV has a Category column.
 - **Unit cost** is an optional field (labels don't print prices). The Inventory screen totals the value.
 - **Settings → Mouser Search API key** turns on "Look up price on Mouser" in the review screen, which fills in the
   price (at your bag quantity), the official product link, and corrects an OCR slip in the part number.

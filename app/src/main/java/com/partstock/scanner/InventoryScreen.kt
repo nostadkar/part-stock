@@ -10,7 +10,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -21,6 +23,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -55,6 +58,7 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
     var menuOpen by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<PartRow?>(null) }
     var pendingCsv by remember { mutableStateOf("") }
+    var bucket by remember { mutableStateOf<String?>(null) } // null = all categories
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
 
@@ -69,12 +73,18 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
         }
     }
 
-    val shown = remember(parts, query) {
+    val counts = remember(parts) { parts.groupingBy { it.category }.eachCount() }
+    val shown = remember(parts, query, bucket) {
         val q = InventoryDb.norm(query)
-        if (q.isEmpty()) parts else parts.filter { p ->
-            listOf(p.mpn, p.description, p.manufacturer, p.location, p.distributorPn, p.customerPn)
-                .any { InventoryDb.norm(it).contains(q) }
+        parts.filter { p ->
+            (bucket == null || p.category == bucket) &&
+                (q.isEmpty() || listOf(p.mpn, p.description, p.manufacturer, p.location, p.distributorPn, p.customerPn, p.category)
+                    .any { InventoryDb.norm(it).contains(q) })
         }
+    }
+    val groups = remember(shown) {
+        val order = com.partstock.scanner.parse.Categories.ALL
+        shown.groupBy { it.category }.toList().sortedBy { (c, _) -> order.indexOf(c).let { if (it < 0) 999 else it } }
     }
     val pieces = parts.sumOf { it.quantity }
     val value = parts.sumOf { (it.unitCost ?: 0.0) * it.quantity }
@@ -122,6 +132,21 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (counts.size > 1) {
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()).padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    FilterChip(selected = bucket == null, onClick = { bucket = null }, label = { Text("All") })
+                    com.partstock.scanner.parse.Categories.ALL.filter { counts.containsKey(it) }.forEach { c ->
+                        FilterChip(
+                            selected = bucket == c,
+                            onClick = { bucket = if (bucket == c) null else c },
+                            label = { Text("$c (${counts[c]})") },
+                        )
+                    }
+                }
+            }
             val summary = buildString {
                 append("${parts.size} parts · $pieces pieces")
                 if (parts.size > unpriced) append(" · \$${InventoryDb.fmtMoney(value)} value")
@@ -137,7 +162,16 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
                 Text("Nothing yet. Scan a label to add your first part.", modifier = Modifier.padding(top = 24.dp))
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(shown, key = { it.id }) { p ->
+                groups.forEach { (cat, rows) ->
+                item(key = "h-$cat") {
+                    Text(
+                        "$cat · ${rows.size}",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+                items(rows, key = { it.id }) { p ->
                     Card(Modifier.fillMaxWidth().clickable { editing = p }) {
                         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
@@ -167,6 +201,7 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
                         }
                     }
                 }
+                }
             }
         }
     }
@@ -175,8 +210,8 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
         EditDialog(
             part = p,
             onDismiss = { editing = null },
-            onSave = { q, loc, desc, cost ->
-                db.update(p.id, q, loc, desc, cost)
+            onSave = { q, loc, desc, cost, cat ->
+                db.update(p.id, q, loc, desc, cost, cat)
                 editing = null
                 version++
             },
@@ -194,7 +229,7 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
 private fun EditDialog(
     part: PartRow,
     onDismiss: () -> Unit,
-    onSave: (Int, String, String, Double?) -> Unit,
+    onSave: (Int, String, String, Double?, String) -> Unit,
     onDelete: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -202,6 +237,7 @@ private fun EditDialog(
     var location by remember { mutableStateOf(part.location) }
     var description by remember { mutableStateOf(part.description) }
     var cost by remember { mutableStateOf(part.unitCost?.let { InventoryDb.fmtCost(it) }.orEmpty()) }
+    var category by remember { mutableStateOf(part.category) }
     var confirmDelete by remember { mutableStateOf(false) }
     val link = part.link()
 
@@ -219,6 +255,7 @@ private fun EditDialog(
                     TextButton(onClick = { openLink(context, link) }) { Text("Open on ${Links.siteName(link)}") }
                 }
                 OutlinedTextField(description, { description = it }, label = { Text("Description") })
+                CategoryPicker(category) { category = it }
                 OutlinedTextField(
                     qty, { v -> qty = v.filter { it.isDigit() } }, label = { Text("Quantity") }, singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -235,7 +272,7 @@ private fun EditDialog(
         },
         confirmButton = {
             TextButton(onClick = {
-                onSave(qty.toIntOrNull() ?: part.quantity, location, description, cost.toDoubleOrNull())
+                onSave(qty.toIntOrNull() ?: part.quantity, location, description, cost.toDoubleOrNull(), category)
             }) { Text("Save") }
         },
         dismissButton = {

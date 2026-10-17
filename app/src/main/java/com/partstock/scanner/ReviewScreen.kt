@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.partstock.scanner.parse.Categories
 import com.partstock.scanner.parse.Links
 import com.partstock.scanner.parse.ParsedPart
 import com.partstock.scanner.parse.PartNumberVariants
@@ -71,6 +72,9 @@ fun ReviewScreen(
     var distributorPn by remember { mutableStateOf(part.distributorPn.orEmpty()) }
     var customerPn by remember { mutableStateOf(part.customerPn.orEmpty()) }
     var notes by remember { mutableStateOf(part.notes.orEmpty()) }
+    var category by remember { mutableStateOf(Categories.classify(part.description, part.notes)) }
+    var categoryPicked by remember { mutableStateOf(false) } // the user chose one; lookups leave it alone
+    var descriptionFromMouser by remember { mutableStateOf(false) }
     var addMode by remember { mutableStateOf(true) }
     var unitCost by remember { mutableStateOf("") }
     // Product page returned by Mouser's lookup; otherwise a link is built from the part numbers.
@@ -96,6 +100,8 @@ fun ReviewScreen(
     LaunchedEffect(existing) {
         val known = existing?.row?.unitCost
         if (known != null && unitCost.isBlank()) unitCost = InventoryDb.fmtCost(known)
+        val savedCat = existing?.row?.category
+        if (savedCat != null && savedCat != Categories.OTHER && !categoryPicked && !descriptionFromMouser) category = savedCat
     }
 
     fun lookupMouser() {
@@ -135,7 +141,11 @@ fun ReviewScreen(
                     if (r.unitPrice != null) unitCost = InventoryDb.fmtCost(r.unitPrice)
                     if (r.url.isNotBlank()) apiUrl = r.url
                     if (part.distributor == ParsedPart.MOUSER && r.mouserPn.isNotBlank()) distributorPn = r.mouserPn
-                    if (description.isBlank() && r.description.isNotBlank()) description = r.description
+                    if (r.description.isNotBlank()) {
+                        description = r.description
+                        descriptionFromMouser = true
+                    }
+                    if (!categoryPicked) category = Categories.classify(r.category, r.description, description)
                     if (manufacturer.isBlank() && r.manufacturer.isNotBlank()) manufacturer = r.manufacturer
                     // A part number worked out from the label can be off by an OCR slip; Mouser's is exact.
                     if ((mpn.isBlank() || part.mpnDerived) && r.mpn.isNotBlank()) mpn = r.mpn
@@ -175,6 +185,7 @@ fun ReviewScreen(
                     dateCode = part.dateCode.orEmpty(), refDes = part.refDes.orEmpty(),
                     raw = part.rawText.take(1500),
                     unitCost = cost, productUrl = link.orEmpty(),
+                    category = category, descriptionFromMouser = descriptionFromMouser,
                 )
                 val name = mpn.ifBlank { customerPn.ifBlank { distributorPn } }
                 try {
@@ -222,6 +233,10 @@ fun ReviewScreen(
             Field("Manufacturer part number", mpn, { mpn = it }, mono = true,
                 hint = if (part.mpnDerived) "Worked out from the Mouser P/N — check it" else null)
             Field("Description", description, { description = it }, singleLine = false)
+            CategoryPicker(category) {
+                category = it
+                categoryPicked = true
+            }
             Field("Manufacturer", manufacturer, { manufacturer = it })
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {

@@ -18,6 +18,8 @@ data class MouserPart(
     /** Quantity of the price break the price comes from. */
     val priceAtQty: Int?,
     val currency: String,
+    /** Mouser's product category, e.g. "Switching Voltage Regulators". */
+    val category: String = "",
 )
 
 /** A problem Mouser reported (bad key, rate limit). The message is safe to show: it never contains the key. */
@@ -124,6 +126,7 @@ object MouserApi {
             unitPrice = price,
             priceAtQty = priceQty,
             currency = currency,
+            category = o.optString("Category"),
         )
     }
 
