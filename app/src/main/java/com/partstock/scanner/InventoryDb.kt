@@ -5,8 +5,12 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import com.partstock.scanner.parse.Links
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 data class PartRow(
     val id: Long,
@@ -24,7 +28,13 @@ data class PartRow(
     val refDes: String,
     val scans: Int,
     val updatedAt: String,
+    val unitCost: Double?,
+    val productUrl: String,
 )
+
+/** Saved link, or one built from the part numbers for rows saved before links existed. */
+fun PartRow.link(): String =
+    productUrl.ifBlank { Links.productUrl(distributor, distributorPn, mpn).orEmpty() }
 
 data class Match(val row: PartRow, val matchedOn: String)
 
@@ -44,10 +54,12 @@ data class ScanEntry(
     val dateCode: String,
     val refDes: String,
     val raw: String,
+    val unitCost: Double?,
+    val productUrl: String,
 )
 
 /** Inventory stored on the phone: one row per part, plus a log of every save. */
-class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 1) {
+class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 2) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -59,7 +71,8 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                 distributor_pn TEXT NOT NULL DEFAULT '', customer_pn TEXT NOT NULL DEFAULT '',
                 source TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
                 date_code TEXT NOT NULL DEFAULT '', ref_des TEXT NOT NULL DEFAULT '',
-                scans INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT '')"""
+                scans INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT '',
+                unit_cost REAL, product_url TEXT NOT NULL DEFAULT '')"""
         )
         db.execSQL(
             """CREATE TABLE scan_log (
@@ -69,7 +82,12 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         )
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE parts ADD COLUMN unit_cost REAL")
+            db.execSQL("ALTER TABLE parts ADD COLUMN product_url TEXT NOT NULL DEFAULT ''")
+        }
+    }
 
     /** Matches on MPN, then customer PN, then distributor PN, ignoring case and spaces. */
     fun find(mpn: String, customerPn: String, distributorPn: String): Match? {
@@ -113,6 +131,9 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                     fill("date_code", r.dateCode, e.dateCode)
                     fill("ref_des", r.refDes, e.refDes)
                     if (e.location.isNotBlank()) put("location", e.location)
+                    // Newest price and link win: they come from the latest lookup or an edit.
+                    if (e.unitCost != null) put("unit_cost", e.unitCost)
+                    if (e.productUrl.isNotBlank()) put("product_url", e.productUrl)
                     put("source", appendUnique(r.source, e.source))
                     put("notes", appendUnique(r.notes, e.notes))
                     put("scans", r.scans + 1)
@@ -127,6 +148,8 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                     put("distributor_pn", e.distributorPn); put("customer_pn", e.customerPn)
                     put("source", e.source); put("notes", e.notes); put("date_code", e.dateCode)
                     put("ref_des", e.refDes); put("scans", 1); put("updated_at", now)
+                    put("product_url", e.productUrl)
+                    if (e.unitCost != null) put("unit_cost", e.unitCost)
                 })
             }
             db.insert("scan_log", null, ContentValues().apply {
@@ -149,11 +172,13 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             buildList { while (c.moveToNext()) add(c.toRow()) }
         }
 
-    fun update(id: Long, quantity: Int, location: String, description: String) {
-        writableDatabase.update("parts", ContentValues().apply {
+    fun update(id: Long, quantity: Int, location: String, description: String, unitCost: Double?) {
+        val v = ContentValues().apply {
             put("quantity", quantity); put("location", location.trim())
             put("description", description.trim()); put("updated_at", now())
-        }, "id = ?", arrayOf(id.toString()))
+        }
+        if (unitCost != null) v.put("unit_cost", unitCost) else v.putNull("unit_cost")
+        writableDatabase.update("parts", v, "id = ?", arrayOf(id.toString()))
     }
 
     fun delete(id: Long) {
@@ -162,14 +187,17 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
 
     fun inventoryCsv(): String {
         val header = listOf(
-            "MPN", "Description", "Manufacturer", "Quantity", "Location", "Distributor", "Distributor PN",
-            "Customer PN", "Source", "Notes", "Date Code", "Ref Des", "Scans", "Last Updated",
+            "MPN", "Description", "Manufacturer", "Quantity", "Unit Cost", "Total Value", "Location",
+            "Distributor", "Distributor PN", "Customer PN", "Link", "Source", "Notes", "Date Code", "Ref Des",
+            "Scans", "Last Updated",
         )
         val rows = all().map {
             listOf(
-                it.mpn, it.description, it.manufacturer, it.quantity.toString(), it.location, it.distributor,
-                it.distributorPn, it.customerPn, it.source, it.notes, it.dateCode, it.refDes,
-                it.scans.toString(), it.updatedAt,
+                it.mpn, it.description, it.manufacturer, it.quantity.toString(),
+                it.unitCost?.let(::plain).orEmpty(),
+                it.unitCost?.let { c -> plain(c * it.quantity) }.orEmpty(),
+                it.location, it.distributor, it.distributorPn, it.customerPn, it.link(), it.source, it.notes,
+                it.dateCode, it.refDes, it.scans.toString(), it.updatedAt,
             )
         }
         return csv(header, rows)
@@ -196,14 +224,19 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
     private fun Cursor.str(col: String) = getString(getColumnIndexOrThrow(col)).orEmpty()
     private fun Cursor.int(col: String) = getInt(getColumnIndexOrThrow(col))
 
-    private fun Cursor.toRow() = PartRow(
-        id = getLong(getColumnIndexOrThrow("id")),
-        mpn = str("mpn"), description = str("description"), manufacturer = str("manufacturer"),
-        quantity = int("quantity"), location = str("location"), distributor = str("distributor"),
-        distributorPn = str("distributor_pn"), customerPn = str("customer_pn"), source = str("source"),
-        notes = str("notes"), dateCode = str("date_code"), refDes = str("ref_des"), scans = int("scans"),
-        updatedAt = str("updated_at"),
-    )
+    private fun Cursor.toRow(): PartRow {
+        val costIdx = getColumnIndexOrThrow("unit_cost")
+        return PartRow(
+            id = getLong(getColumnIndexOrThrow("id")),
+            mpn = str("mpn"), description = str("description"), manufacturer = str("manufacturer"),
+            quantity = int("quantity"), location = str("location"), distributor = str("distributor"),
+            distributorPn = str("distributor_pn"), customerPn = str("customer_pn"), source = str("source"),
+            notes = str("notes"), dateCode = str("date_code"), refDes = str("ref_des"), scans = int("scans"),
+            updatedAt = str("updated_at"),
+            unitCost = if (isNull(costIdx)) null else getDouble(costIdx),
+            productUrl = str("product_url"),
+        )
+    }
 
     companion object {
         private val STAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
@@ -216,6 +249,18 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             if (a.isEmpty() || cur.contains(a)) return cur
             return if (cur.isEmpty()) a else "$cur; $a"
         }
+
+        /** Plain number for CSV (no currency symbol, no exponent). */
+        fun plain(d: Double): String =
+            BigDecimal.valueOf(d).setScale(4, RoundingMode.HALF_UP).stripTrailingZeros().toPlainString()
+
+        /** Unit cost for display: at least 2 decimals, up to 4 (parts can cost fractions of a cent). */
+        fun fmtCost(d: Double): String {
+            val s = BigDecimal.valueOf(d).setScale(4, RoundingMode.HALF_UP).stripTrailingZeros()
+            return (if (s.scale() < 2) s.setScale(2) else s).toPlainString()
+        }
+
+        fun fmtMoney(d: Double): String = String.format(Locale.US, "%.2f", d)
 
         /** RFC 4180 CSV; imports cleanly into Google Sheets and Excel. */
         fun csv(header: List<String>, rows: List<List<String>>): String {

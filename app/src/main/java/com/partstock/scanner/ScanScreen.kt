@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -71,6 +72,7 @@ import kotlinx.coroutines.launch
 fun ScanScreen(
     partCount: Int,
     onInventory: () -> Unit,
+    onSettings: () -> Unit,
     onLines: (List<OcrLine>) -> Unit,
     onError: (String) -> Unit,
 ) {
@@ -154,8 +156,8 @@ fun ScanScreen(
                         onClick = onInventory,
                         label = { Text("Inventory ($partCount)") },
                         leadingIcon = { Icon(Icons.Filled.Inventory2, contentDescription = null) },
-                        modifier = Modifier.padding(end = 8.dp),
                     )
+                    IconButton(onClick = onSettings) { Icon(Icons.Filled.Settings, contentDescription = "Settings") }
                 },
             )
         },

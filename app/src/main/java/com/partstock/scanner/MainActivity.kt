@@ -29,8 +29,9 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         val prefs = Prefs(this)
         val db = InventoryDb(applicationContext)
+        val secrets = SecretStore(applicationContext)
         setContent {
-            PartStockTheme { App(prefs, db) }
+            PartStockTheme { App(prefs, db, secrets) }
         }
     }
 }
@@ -39,10 +40,11 @@ private sealed interface Screen {
     data object Scan : Screen
     data class Review(val part: ParsedPart) : Screen
     data object Inventory : Screen
+    data object Settings : Screen
 }
 
 @Composable
-private fun App(prefs: Prefs, db: InventoryDb) {
+private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
     val context = LocalContext.current
     var screen by remember { mutableStateOf<Screen>(Screen.Scan) }
     var partCount by remember { mutableIntStateOf(db.all().size) }
@@ -53,6 +55,7 @@ private fun App(prefs: Prefs, db: InventoryDb) {
         Screen.Scan -> ScanScreen(
             partCount = partCount,
             onInventory = { screen = Screen.Inventory },
+            onSettings = { screen = Screen.Settings },
             onLines = { lines ->
                 val part = LabelParser.parse(lines)
                 if (part.rawText.isBlank()) toast("No text found. Move closer and avoid glare.")
@@ -67,6 +70,7 @@ private fun App(prefs: Prefs, db: InventoryDb) {
                 part = s.part,
                 db = db,
                 prefs = prefs,
+                secrets = secrets,
                 onSaved = { msg ->
                     toast(msg)
                     partCount = db.all().size
@@ -74,6 +78,11 @@ private fun App(prefs: Prefs, db: InventoryDb) {
                 },
                 onCancel = { screen = Screen.Scan },
             )
+        }
+
+        Screen.Settings -> {
+            BackHandler { screen = Screen.Scan }
+            SettingsScreen(secrets = secrets, onDone = { screen = Screen.Scan })
         }
 
         Screen.Inventory -> {

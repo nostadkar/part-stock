@@ -11,7 +11,13 @@ Label types it understands:
 | **Mouser** | P/N, Cust P/N, Desc, manufacturer + category line, QTY, COO, Cust PO. The MPN is worked out by dropping Mouser's numeric prefix (`798-DF11-12DP-2DS24` → `DF11-12DP-2DS24`) and flagged for you to check. |
 | **Entrust kit** | PN (customer PN), Alt PN (MPN), Desc, Qty (per board), kit Qty from the header, REF DES list, item number |
 
+| **MyData sticker** | Component (customer PN) and Comment (description) |
+
 Anything else falls back to a best-effort read; you can always correct fields before saving.
+
+**Several labels on one bag** (e.g. a Mouser label with an Entrust kit label and a MyData sticker stuck on it)
+are read from one photo and merged into one part. The Mouser/DigiKey label gives the bag quantity; the kit
+label's Qty is per board, so it is shown as a hint ("1 per board × 6 boards = 6 used") and never added to the count.
 
 Parts are matched on **MPN**, then **Customer PN**, then **Distributor PN**, so the DigiKey bag
 (Customer Reference `811755-101`, MPN `2SK3019-TP`) and the Entrust kit bag (PN `811755-101`,
@@ -27,6 +33,20 @@ The APK is signed with a test key kept in the repo (`app/partstock-test.keystore
 installs over the previous one and your inventory is kept. Don't reuse that key for anything published.
 
 To build locally instead: open the folder in Android Studio and press Run. Min Android 8.0.
+
+## Links, cost and the Mouser API key
+
+- Every part gets a link: Mouser labels open the Mouser product page, DigiKey labels open a DigiKey search for the
+  part number. It is saved with the part and included in the CSV.
+- **Unit cost** is an optional field (labels don't print prices). The Inventory screen totals the value.
+- **Settings → Mouser Search API key** turns on "Look up price on Mouser" in the review screen, which fills in the
+  price (at your bag quantity), the official product link, and corrects an OCR slip in the part number.
+
+**The API key is never in this repository or in the APK.** You paste it into the app once. It is encrypted
+with an Android Keystore key that can't be exported, only the encrypted text is stored, that file is excluded
+from backups, and the key never appears in exports or logs. Lookups go directly from the phone to Mouser over HTTPS.
+Don't put keys in source files, GitHub secrets baked into the build, or `BuildConfig`: the repo is public and an
+APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it in your Mouser account.
 
 ## Using it
 

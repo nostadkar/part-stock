@@ -38,11 +38,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.partstock.scanner.parse.Links
 import com.partstock.scanner.parse.ParsedPart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -54,6 +57,7 @@ fun ReviewScreen(
     part: ParsedPart,
     db: InventoryDb,
     prefs: Prefs,
+    secrets: SecretStore,
     onSaved: (String) -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -67,6 +71,13 @@ fun ReviewScreen(
     var customerPn by remember { mutableStateOf(part.customerPn.orEmpty()) }
     var notes by remember { mutableStateOf(part.notes.orEmpty()) }
     var addMode by remember { mutableStateOf(true) }
+    var unitCost by remember { mutableStateOf("") }
+    // Product page returned by Mouser's lookup; otherwise a link is built from the part numbers.
+    var apiUrl by remember { mutableStateOf<String?>(null) }
+    var looking by remember { mutableStateOf(false) }
+    var lookupMsg by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    val mouserKey = remember { secrets.getMouserKey() }
 
     var existing by remember { mutableStateOf<Match?>(null) }
     var saving by remember { mutableStateOf(false) }
@@ -78,13 +89,60 @@ fun ReviewScreen(
         existing = withContext(Dispatchers.IO) { db.find(mpn.trim(), customerPn.trim(), distributorPn.trim()) }
     }
     val hasKey = mpn.isNotBlank() || customerPn.isNotBlank() || distributorPn.isNotBlank()
+    val link: String? = apiUrl ?: Links.productUrl(part.distributor, distributorPn, mpn)
+
+    // Keep the price already on file when this part is rescanned, unless a new one is typed or looked up.
+    LaunchedEffect(existing) {
+        val known = existing?.row?.unitCost
+        if (known != null && unitCost.isBlank()) unitCost = InventoryDb.fmtCost(known)
+    }
+
+    fun lookupMouser() {
+        val key = mouserKey ?: return
+        val pn = if (part.distributor == ParsedPart.MOUSER && distributorPn.isNotBlank()) distributorPn.trim() else mpn.trim()
+        if (pn.isBlank()) {
+            lookupMsg = "Enter a part number first."
+            return
+        }
+        val q = qty.trim().toIntOrNull() ?: 1
+        scope.launch {
+            looking = true
+            lookupMsg = null
+            try {
+                val r = MouserApi.lookup(key, pn, q)
+                if (r == null) {
+                    lookupMsg = "Mouser has no exact match for $pn."
+                } else {
+                    if (r.unitPrice != null) unitCost = InventoryDb.fmtCost(r.unitPrice)
+                    if (r.url.isNotBlank()) apiUrl = r.url
+                    if (description.isBlank() && r.description.isNotBlank()) description = r.description
+                    if (manufacturer.isBlank() && r.manufacturer.isNotBlank()) manufacturer = r.manufacturer
+                    // A part number worked out from the label can be off by an OCR slip; Mouser's is exact.
+                    if ((mpn.isBlank() || part.mpnDerived) && r.mpn.isNotBlank()) mpn = r.mpn
+                    lookupMsg = if (r.unitPrice != null) {
+                        "Mouser: ${r.currency} ${InventoryDb.fmtCost(r.unitPrice)} each at ${r.priceAtQty}+"
+                    } else {
+                        "Found on Mouser, but no price listed."
+                    }
+                }
+            } catch (e: MouserException) {
+                lookupMsg = e.message
+            } catch (e: Exception) {
+                lookupMsg = "Lookup failed: " + (e.message ?: e.javaClass.simpleName).replace(key, "***")
+            } finally {
+                looking = false
+            }
+        }
+    }
 
     fun save() {
         error = null
         val q = qty.trim().toIntOrNull()
+        val cost = unitCost.trim().toDoubleOrNull()
         when {
             !hasKey -> error = "Need at least a part number (MPN, customer PN or distributor PN)."
             q == null || q < 0 -> error = "Quantity must be a whole number."
+            unitCost.isNotBlank() && (cost == null || cost < 0) -> error = "Unit cost must be a number."
             else -> scope.launch {
                 saving = true
                 prefs.lastLocation = location
@@ -95,6 +153,7 @@ fun ReviewScreen(
                     customerPn = customerPn.trim(), source = part.labelType, notes = notes.trim(),
                     dateCode = part.dateCode.orEmpty(), refDes = part.refDes.orEmpty(),
                     raw = part.rawText.take(1500),
+                    unitCost = cost, productUrl = link.orEmpty(),
                 )
                 val name = mpn.ifBlank { customerPn.ifBlank { distributorPn } }
                 try {
@@ -130,7 +189,10 @@ fun ReviewScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AssistChip(onClick = {}, label = { Text(part.labelType + " label") })
+                AssistChip(
+                    onClick = {},
+                    label = { Text(if (part.labelType.contains("+")) part.labelType + " labels" else part.labelType + " label") },
+                )
                 if (part.refDesCount > 0) AssistChip(onClick = {}, label = { Text("${part.refDesCount} ref des") })
             }
 
@@ -165,6 +227,43 @@ fun ReviewScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(selected = addMode, onClick = { addMode = true }, label = { Text("Add to stock") })
                 FilterChip(selected = !addMode, onClick = { addMode = false }, label = { Text("Set count to this") })
+            }
+
+            OutlinedTextField(
+                value = unitCost,
+                onValueChange = { v -> unitCost = v.filter { it.isDigit() || it == '.' } },
+                label = { Text("Unit cost (each)") },
+                singleLine = true,
+                prefix = { Text("$") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                supportingText = {
+                    val total = unitCost.toDoubleOrNull()?.let { c -> qty.toIntOrNull()?.let { n -> c * n } }
+                    Text(if (total != null) "This entry: \$${InventoryDb.fmtMoney(total)}" else "Labels don't print a price")
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (mouserKey != null) {
+                OutlinedButton(onClick = ::lookupMouser, enabled = !looking, modifier = Modifier.fillMaxWidth()) {
+                    if (looking) CircularProgressIndicator(Modifier.size(18.dp)) else Text("Look up price on Mouser")
+                }
+            } else {
+                Text(
+                    "Add a Mouser API key in Settings to fill in the price automatically.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            lookupMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            if (link != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        link,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { openLink(context, link) }) { Text("Open on ${Links.siteName(link)}") }
+                }
             }
 
             Field(
@@ -216,28 +315,39 @@ private fun StockBanner(existing: Match?, hasKey: Boolean, qty: Int?, addMode: B
     }
 }
 
-/** Entrust kit labels print a per-board quantity and a kit count; offer the product. */
+/** Entrust kit labels print a per-board quantity and a kit count. */
 @Composable
 private fun KitHint(part: ParsedPart, onUse: (Int) -> Unit) {
-    val q = part.quantity
-    val k = part.kitQuantity
-    if (part.labelType != ParsedPart.ENTRUST || q == null) return
+    val perBoard = part.kitPerBoard ?: return
+    val kits = part.kitQuantity
+    val needs = if (kits != null && kits > 0) perBoard * kits else null
     Column {
-        if (k != null && k > 1) {
-            Row {
-                Text(
-                    "Label says $q per board × $k kits = ${q * k}. Count the bag if unsure.",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.weight(1f).padding(top = 12.dp),
-                )
-                TextButton(onClick = { onUse(q * k) }) { Text("Use ${q * k}") }
+        if (part.distributorPn == null) {
+            // Kit label only: its Qty is per board, so offer the whole-kit total.
+            if (kits != null && kits > 1 && needs != null) {
+                Row {
+                    Text(
+                        "Label says $perBoard per board × $kits kits = $needs. Count the bag if unsure.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f).padding(top = 12.dp),
+                    )
+                    TextButton(onClick = { onUse(needs) }) { Text("Use $needs") }
+                }
             }
-        }
-        if (part.refDesCount > 0 && part.refDesCount != q) {
+            if (part.refDesCount > 0 && part.refDesCount != perBoard) {
+                Text(
+                    "Ref des list has ${part.refDesCount} entries but Qty reads $perBoard.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        } else if (needs != null) {
+            // Distributor label present: its quantity is the bag count, the kit label says how many are used.
             Text(
-                "Ref des list has ${part.refDesCount} entries but Qty reads $q.",
+                "Kit label: $perBoard per board × $kits boards = $needs used. " +
+                    "Quantity above is what's in this bag (${part.quantity ?: "?"}).",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(top = 4.dp),
             )
         }
     }

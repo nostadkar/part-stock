@@ -15,8 +15,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
@@ -43,6 +43,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.partstock.scanner.parse.Links
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -75,6 +76,9 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
                 .any { InventoryDb.norm(it).contains(q) }
         }
     }
+    val pieces = parts.sumOf { it.quantity }
+    val value = parts.sumOf { (it.unitCost ?: 0.0) * it.quantity }
+    val unpriced = parts.count { it.unitCost == null }
 
     Scaffold(
         topBar = {
@@ -118,8 +122,13 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
+            val summary = buildString {
+                append("${parts.size} parts · $pieces pieces")
+                if (parts.size > unpriced) append(" · \$${InventoryDb.fmtMoney(value)} value")
+                if (unpriced > 0 && parts.size > unpriced) append(" ($unpriced unpriced)")
+            }
             Text(
-                "${parts.size} parts · ${parts.sumOf { it.quantity }} pieces",
+                summary,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(vertical = 8.dp),
@@ -145,8 +154,16 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
-                            Text(p.quantity.toString(), style = MaterialTheme.typography.titleLarge,
-                                modifier = Modifier.padding(start = 12.dp))
+                            Column(Modifier.padding(start = 12.dp), horizontalAlignment = Alignment.End) {
+                                Text(p.quantity.toString(), style = MaterialTheme.typography.titleLarge)
+                                p.unitCost?.let { c ->
+                                    Text(
+                                        "\$${InventoryDb.fmtCost(c)} ea",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -158,8 +175,8 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
         EditDialog(
             part = p,
             onDismiss = { editing = null },
-            onSave = { q, loc, desc ->
-                db.update(p.id, q, loc, desc)
+            onSave = { q, loc, desc, cost ->
+                db.update(p.id, q, loc, desc, cost)
                 editing = null
                 version++
             },
@@ -177,13 +194,16 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
 private fun EditDialog(
     part: PartRow,
     onDismiss: () -> Unit,
-    onSave: (Int, String, String) -> Unit,
+    onSave: (Int, String, String, Double?) -> Unit,
     onDelete: () -> Unit,
 ) {
+    val context = LocalContext.current
     var qty by remember { mutableStateOf(part.quantity.toString()) }
     var location by remember { mutableStateOf(part.location) }
     var description by remember { mutableStateOf(part.description) }
+    var cost by remember { mutableStateOf(part.unitCost?.let { InventoryDb.fmtCost(it) }.orEmpty()) }
     var confirmDelete by remember { mutableStateOf(false) }
+    val link = part.link()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -195,10 +215,18 @@ private fun EditDialog(
                     if (part.customerPn.isNotBlank()) "Cust: ${part.customerPn}" else "",
                 ).filter { it.isNotBlank() }.joinToString(" · ")
                 if (ids.isNotBlank()) Text(ids, style = MaterialTheme.typography.bodySmall)
+                if (link.isNotBlank()) {
+                    TextButton(onClick = { openLink(context, link) }) { Text("Open on ${Links.siteName(link)}") }
+                }
                 OutlinedTextField(description, { description = it }, label = { Text("Description") })
                 OutlinedTextField(
                     qty, { v -> qty = v.filter { it.isDigit() } }, label = { Text("Quantity") }, singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+                OutlinedTextField(
+                    cost, { v -> cost = v.filter { it.isDigit() || it == '.' } }, label = { Text("Unit cost (each)") },
+                    singleLine = true, prefix = { Text("$") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 )
                 OutlinedTextField(location, { location = it }, label = { Text("Bin / location") }, singleLine = true)
                 if (part.notes.isNotBlank()) Text("Notes: ${part.notes}", style = MaterialTheme.typography.bodySmall)
@@ -206,7 +234,9 @@ private fun EditDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onSave(qty.toIntOrNull() ?: part.quantity, location, description) }) { Text("Save") }
+            TextButton(onClick = {
+                onSave(qty.toIntOrNull() ?: part.quantity, location, description, cost.toDoubleOrNull())
+            }) { Text("Save") }
         },
         dismissButton = {
             TextButton(onClick = { if (confirmDelete) onDelete() else confirmDelete = true }) {
