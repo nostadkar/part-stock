@@ -117,6 +117,14 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   asks for; DigiKey parts have their part number in a separate column.
 - **Export** (share icon on the Inventory screen): share or save the inventory CSV, or the scan log CSV
   (every save with the raw OCR text). The CSV opens directly in Google Sheets or Excel.
+- **Import an order** (share icon on the Inventory screen → *Import Mouser / DigiKey order CSV…*): pick a CSV exported
+  from Mouser (order history or cart) or DigiKey (order or cart). Mouser vs DigiKey is told from the part-number column
+  (or DigiKey's `-ND` numbers). Columns are found by keywords in the header (*Mouser No/#*, *Mfr. No*, *Manufacturer
+  Part/Product Number*, *Digi-Key Part Number*, *Customer No/Reference*, *Quantity / Order Qty. / Qty Shipped*,
+  *Unit Price / Price (USD)*), so small wording changes still work; an Excel export needs saving as CSV first. Tick the
+  lines and *Add*: each is added to stock and matched to existing parts like a scan, with the file's unit price, a
+  link and a category. The order number comes from the file (Sales Order #) or its name and can be edited; each
+  order line is remembered, so importing the same order again shows "Already imported" and leaves those lines unticked.
 - **Backup & restore** (Settings): *Restore from CSV* loads an inventory CSV exported by the app (older exports
   without Category / Unit Cost / Link work too). Choose *Merge* (rows are matched like a scan, quantities set from the
   file, other parts kept) or *Replace everything* (the scan log is kept); a summary like "42 parts: 30 new, 12 updated"
@@ -143,6 +151,8 @@ app/src/main/java/com/partstock/scanner/
   ReviewScreen.kt            Edit fields, stock check, save
   InventoryScreen.kt         List, search, edit, delete, export
   InventoryDb.kt             SQLite storage + CSV
+  OrderImport.kt             Import a Mouser / DigiKey order CSV
+  parse/OrderCsv.java        Order CSV column mapping (pure Java, unit tested)
   parse/InventoryCsv.java    CSV read/write for export and restore (pure Java, unit tested)
   AutoBackup.kt              Writes the inventory CSV to a picked folder after each save
   Export.kt                  Share sheet / save-to-file

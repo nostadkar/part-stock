@@ -79,6 +79,7 @@ fun InventoryScreen(db: InventoryDb, secrets: SecretStore, onBack: () -> Unit) {
     var buildingKit by remember { mutableStateOf(false) }
     var lowOnly by remember { mutableStateOf(false) }
     var refreshing by remember { mutableStateOf(false) }
+    var importingOrder by remember { mutableStateOf(false) }
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
 
@@ -121,8 +122,14 @@ fun InventoryScreen(db: InventoryDb, secrets: SecretStore, onBack: () -> Unit) {
                         Icon(Icons.Filled.Refresh, contentDescription = "Refresh prices")
                     }
                     IconButton(onClick = { buildingKit = true }) { Icon(Icons.Filled.Build, contentDescription = "Build kit") }
-                    IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.Share, contentDescription = "Export") }
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(Icons.Filled.Share, contentDescription = "Import and export")
+                    }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(text = { Text("Import Mouser / DigiKey order CSV…") }, onClick = {
+                            menuOpen = false
+                            importingOrder = true
+                        })
                         DropdownMenuItem(text = { Text("Share inventory CSV") }, onClick = {
                             menuOpen = false
                             Export.share(context, Export.fileName("inventory"), db.inventoryCsv())
@@ -298,6 +305,19 @@ fun InventoryScreen(db: InventoryDb, secrets: SecretStore, onBack: () -> Unit) {
             onClose = { changed ->
                 refreshing = false
                 if (changed) version++
+            },
+        )
+    }
+
+    if (importingOrder) {
+        OrderImportFlow(
+            db = db,
+            onClose = { msg ->
+                importingOrder = false
+                if (msg != null) {
+                    version++
+                    toast(msg)
+                }
             },
         )
     }

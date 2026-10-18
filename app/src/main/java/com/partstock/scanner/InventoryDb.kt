@@ -249,6 +249,20 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
     /** Adds or updates the part and logs the scan. Returns the new quantity. */
     fun save(e: ScanEntry): Int = saveTx(e).also { onChanged?.invoke() }
 
+    /** Saves several entries (e.g. the lines of an imported order) in one transaction: all or none. */
+    fun saveAll(entries: List<ScanEntry>) {
+        if (entries.isEmpty()) return
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            for (e in entries) saveTx(e)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        onChanged?.invoke()
+    }
+
     private fun saveTx(e: ScanEntry): Int {
         val db = writableDatabase
         db.beginTransaction()
