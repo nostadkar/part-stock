@@ -5,6 +5,8 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import com.partstock.scanner.parse.BomCsv
+import com.partstock.scanner.parse.BuildPlan
 import com.partstock.scanner.parse.Categories
 import com.partstock.scanner.parse.InventoryCsv
 import com.partstock.scanner.parse.Links
@@ -128,11 +130,37 @@ data class LookupUpdate(
     val specs: PartSpecs = PartSpecs.EMPTY,
 )
 
+/** A project (board) with a BOM. */
+data class ProjectSummary(val id: Long, val name: String, val source: String, val lines: Int, val updatedAt: String)
+
+/** One BOM line of a project. [partId] is a stock part picked by hand; null = matched automatically. */
+data class ProjectLine(
+    val id: Long,
+    val mpn: String,
+    val customerPn: String,
+    val distributorPn: String,
+    val manufacturer: String,
+    val value: String,
+    val footprint: String,
+    val description: String,
+    val refDes: String,
+    val perBoard: Int,
+    val partId: Long?,
+) {
+    fun toBomLine(): BomCsv.Line = BomCsv.Line().also {
+        it.mpn = mpn; it.customerPn = customerPn; it.distributorPn = distributorPn; it.manufacturer = manufacturer
+        it.value = value; it.footprint = footprint; it.description = description; it.refDes = refDes
+        it.perBoard = perBoard
+    }
+
+    fun toReq(): BuildPlan.Req = BuildPlan.Req.of(toBomLine()).also { it.pickedId = partId }
+}
+
 /** What a CSV restore did (or would do, for a dry run). */
 data class ImportSummary(val rows: Int, val added: Int, val updated: Int, val removed: Int)
 
 /** Inventory stored on the phone: one row per part, plus a log of every save. */
-class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 8) {
+class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 9) {
 
     /** Called after every change to the parts table (used for auto backup). */
     @Volatile var onChanged: (() -> Unit)? = null
@@ -163,6 +191,26 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         )
         db.execSQL("CREATE INDEX IF NOT EXISTS scan_log_bag_fp ON scan_log(bag_fp)")
         createKitItems(db)
+        createProjects(db)
+    }
+
+    /** Projects and their BOM lines. New tables only: nothing in the parts table changes. */
+    private fun createProjects(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, source TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT '')"""
+        )
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS project_lines (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, line INTEGER NOT NULL DEFAULT 0,
+                mpn TEXT NOT NULL DEFAULT '', customer_pn TEXT NOT NULL DEFAULT '',
+                distributor_pn TEXT NOT NULL DEFAULT '', manufacturer TEXT NOT NULL DEFAULT '',
+                value TEXT NOT NULL DEFAULT '', footprint TEXT NOT NULL DEFAULT '',
+                description TEXT NOT NULL DEFAULT '', ref_des TEXT NOT NULL DEFAULT '',
+                per_board INTEGER NOT NULL DEFAULT 1, part_id INTEGER)"""
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS project_lines_project ON project_lines(project_id)")
     }
 
     private fun createKitItems(db: SQLiteDatabase) {
@@ -224,6 +272,10 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                     arrayOf(sp.value, sp.tolerance, sp.voltage, sp.pkg, id),
                 )
             }
+        }
+        if (oldVersion < 9) {
+            // New tables only (projects / BOMs); existing parts, scan log and kits are untouched.
+            createProjects(db)
         }
     }
 
@@ -567,6 +619,123 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         }
         onChanged?.invoke()
         return plan
+    }
+
+    // ---------------------------------------------------------------- projects / BOMs
+
+    /** Saves a new project with its BOM lines; [partIds] (same order, optional) are parts already known. */
+    fun createProject(name: String, source: String, lines: List<BomCsv.Line>, partIds: List<Long?> = emptyList()): Long {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val now = now()
+            val id = db.insert("projects", null, ContentValues().apply {
+                put("name", name.trim().ifBlank { "Project" }); put("source", source)
+                put("created_at", now); put("updated_at", now)
+            })
+            lines.forEachIndexed { i, l ->
+                db.insert("project_lines", null, ContentValues().apply {
+                    put("project_id", id); put("line", i + 1)
+                    put("mpn", l.mpn); put("customer_pn", l.customerPn); put("distributor_pn", l.distributorPn)
+                    put("manufacturer", l.manufacturer); put("value", l.value); put("footprint", l.footprint)
+                    put("description", l.description); put("ref_des", l.refDes); put("per_board", maxOf(1, l.perBoard))
+                    partIds.getOrNull(i)?.let { put("part_id", it) }
+                })
+            }
+            db.setTransactionSuccessful()
+            return id
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun projects(): List<ProjectSummary> =
+        readableDatabase.rawQuery(
+            "SELECT p.id, p.name, p.source, (SELECT COUNT(*) FROM project_lines l WHERE l.project_id = p.id), " +
+                "p.updated_at FROM projects p ORDER BY p.updated_at DESC, p.id DESC", null
+        ).use { c ->
+            buildList {
+                while (c.moveToNext()) {
+                    add(ProjectSummary(c.getLong(0), c.getString(1).orEmpty(), c.getString(2).orEmpty(), c.getInt(3), c.getString(4).orEmpty()))
+                }
+            }
+        }
+
+    fun project(id: Long): ProjectSummary? = projects().firstOrNull { it.id == id }
+
+    fun projectLines(projectId: Long): List<ProjectLine> =
+        readableDatabase.rawQuery(
+            "SELECT * FROM project_lines WHERE project_id = ? ORDER BY line, id", arrayOf(projectId.toString())
+        ).use { c ->
+            buildList {
+                while (c.moveToNext()) {
+                    val pc = c.getColumnIndexOrThrow("part_id")
+                    add(ProjectLine(
+                        id = c.getLong(c.getColumnIndexOrThrow("id")), mpn = c.str("mpn"), customerPn = c.str("customer_pn"),
+                        distributorPn = c.str("distributor_pn"), manufacturer = c.str("manufacturer"),
+                        value = c.str("value"), footprint = c.str("footprint"), description = c.str("description"),
+                        refDes = c.str("ref_des"), perBoard = c.int("per_board"),
+                        partId = if (c.isNull(pc)) null else c.getLong(pc),
+                    ))
+                }
+            }
+        }
+
+    /** Picks the stock part for a BOM line by hand (null = back to automatic matching). */
+    fun setLinePart(lineId: Long, partId: Long?) {
+        writableDatabase.update("project_lines", ContentValues().apply {
+            if (partId == null) putNull("part_id") else put("part_id", partId)
+        }, "id = ?", arrayOf(lineId.toString()))
+    }
+
+    /** Deletes the project and its BOM lines; stock is not touched. */
+    fun deleteProject(id: Long) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.delete("project_lines", "project_id = ?", arrayOf(id.toString()))
+            db.delete("projects", "id = ?", arrayOf(id.toString()))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /** Stock as the build maths sees it. */
+    fun planStock(): List<BuildPlan.Stock> = all().map { p ->
+        BuildPlan.Stock().apply {
+            id = p.id; mpn = p.mpn; customerPn = p.customerPn; distributorPn = p.distributorPn
+            distributor = p.distributor; manufacturer = p.manufacturer; description = p.description
+            link = p.link(); onHand = p.quantity; unitCost = p.unitCost
+        }
+    }
+
+    /** Subtracts a project build ([use]: part id → pieces) in one transaction, logging a "use" per part. */
+    fun buildProject(projectId: Long, name: String, use: Map<Long, Int>, boards: Int) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val now = now()
+            for ((partId, qty) in use) if (qty > 0) useTx(db, partId, qty, "Project $name × $boards", now)
+            db.update("projects", ContentValues().apply { put("updated_at", now) }, "id = ?", arrayOf(projectId.toString()))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        onChanged?.invoke()
+    }
+
+    /** A scanned Entrust kit as BOM lines, each already tied to its stock part. */
+    fun kitAsBom(kit: String): Pair<List<BomCsv.Line>, List<Long?>> {
+        val plan = kitPlan(kit, 1)
+        val lines = plan.map { k ->
+            BomCsv.Line().also {
+                it.mpn = k.part.mpn; it.customerPn = k.part.customerPn; it.distributorPn = k.part.distributorPn
+                it.manufacturer = k.part.manufacturer; it.description = k.part.description
+                it.refDes = k.refDes; it.perBoard = k.perBoard
+            }
+        }
+        return lines to plan.map { it.part.id }
     }
 
     fun inventoryCsv(): String {

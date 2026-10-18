@@ -78,6 +78,11 @@ public final class InventoryCsv {
 
     /** Splits CSV text into records. Blank lines are dropped. */
     public static List<List<String>> parse(String text) {
+        return parse(text, ',');
+    }
+
+    /** Same as {@link #parse(String)} with another field separator (';' or tab, as some BOM exports use). */
+    public static List<List<String>> parse(String text, char delimiter) {
         List<List<String>> out = new ArrayList<>();
         if (text == null) return out;
         if (text.startsWith("﻿")) text = text.substring(1); // Excel's UTF-8 BOM
@@ -101,7 +106,7 @@ public final class InventoryCsv {
             } else if (c == '"' && f.length() == 0 && !fieldStarted) {
                 quoted = true;
                 fieldStarted = true;
-            } else if (c == ',') {
+            } else if (c == delimiter) {
                 rec.add(f.toString());
                 f.setLength(0);
                 fieldStarted = false;

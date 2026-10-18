@@ -203,7 +203,7 @@ private fun shortDay(ts: String): String = try {
     ts
 }
 
-private fun readText(context: Context, uri: Uri): String {
+internal fun readText(context: Context, uri: Uri): String {
     val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: error("empty file")
     // Excel's "Unicode text" saves UTF-16 with a byte-order mark; everything else is read as UTF-8.
     return if (bytes.size >= 2 && ((bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte()) ||
@@ -211,7 +211,7 @@ private fun readText(context: Context, uri: Uri): String {
     ) String(bytes, Charsets.UTF_16) else String(bytes, Charsets.UTF_8)
 }
 
-private fun displayName(context: Context, uri: Uri): String? = try {
+internal fun displayName(context: Context, uri: Uri): String? = try {
     context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
         if (c.moveToFirst()) c.getString(0) else null
     }

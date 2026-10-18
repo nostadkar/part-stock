@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.DeveloperBoard
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
@@ -67,7 +68,7 @@ import java.time.LocalDate
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun InventoryScreen(db: InventoryDb, secrets: SecretStore, onBack: () -> Unit) {
+fun InventoryScreen(db: InventoryDb, secrets: SecretStore, onBack: () -> Unit, onProjects: () -> Unit = {}) {
     val context = LocalContext.current
     var version by remember { mutableIntStateOf(0) } // bump to reload after edits
     val parts = remember(version) { db.all() }
@@ -120,6 +121,9 @@ fun InventoryScreen(db: InventoryDb, secrets: SecretStore, onBack: () -> Unit) {
                 actions = {
                     IconButton(onClick = { refreshing = true }) {
                         Icon(Icons.Filled.Refresh, contentDescription = "Refresh prices")
+                    }
+                    IconButton(onClick = onProjects) {
+                        Icon(Icons.Filled.DeveloperBoard, contentDescription = "Projects / BOMs")
                     }
                     IconButton(onClick = { buildingKit = true }) { Icon(Icons.Filled.Build, contentDescription = "Build kit") }
                     IconButton(onClick = { menuOpen = true }) {

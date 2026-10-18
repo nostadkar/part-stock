@@ -47,6 +47,7 @@ private sealed interface Screen {
     data class Review(val part: ParsedPart, val photo: Bitmap? = null) : Screen
     data object Inventory : Screen
     data object Settings : Screen
+    data object Projects : Screen
 }
 
 @Composable
@@ -122,7 +123,12 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
             InventoryScreen(db = db, secrets = secrets, onBack = {
                 partCount = db.all().size
                 screen = Screen.Scan
-            })
+            }, onProjects = { screen = Screen.Projects })
+        }
+
+        Screen.Projects -> {
+            BackHandler { screen = Screen.Inventory }
+            ProjectsScreen(db = db, onBack = { screen = Screen.Inventory })
         }
     }
 }
