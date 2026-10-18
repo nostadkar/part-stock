@@ -80,13 +80,17 @@ fun InventoryScreen(
     /** Show only parts with stock in this bin (picked on the Locations screen); null = all. */
     bin: String? = null,
     onClearBin: () -> Unit = {},
+    prefs: Prefs? = null,
+    /** Open this part's dialog straight away (a part label was scanned). */
+    openPart: Long? = null,
 ) {
     val context = LocalContext.current
     var version by remember { mutableIntStateOf(0) } // bump to reload after edits
     val parts = remember(version) { db.all() }
     var query by remember { mutableStateOf("") }
     var menuOpen by remember { mutableStateOf(false) }
-    var editing by remember { mutableStateOf<PartRow?>(null) }
+    var editing by remember { mutableStateOf<PartRow?>(openPart?.let { id -> parts.firstOrNull { it.id == id } }) }
+    var labels by remember { mutableStateOf<List<LabelItem>?>(null) }
     var pendingCsv by remember { mutableStateOf("") }
     var bucket by remember { mutableStateOf<String?>(null) } // null = all categories
     var buildingKit by remember { mutableStateOf(false) }
@@ -159,6 +163,12 @@ fun InventoryScreen(
                             pendingCsv = db.inventoryCsv()
                             saveFile.launch(Export.fileName("inventory"))
                         })
+                        if (prefs != null) {
+                            DropdownMenuItem(text = { Text("Make QR labels for the ${shown.size} shown parts…") }, onClick = {
+                                menuOpen = false
+                                labels = shown.map(::partLabel)
+                            })
+                        }
                         DropdownMenuItem(text = { Text("Share reorder list CSV") }, onClick = {
                             menuOpen = false
                             if (db.reorderCount() == 0) toast("Nothing is below its minimum")
@@ -327,6 +337,7 @@ fun InventoryScreen(
                 toast("Deleted ${p.mpn.ifBlank { p.customerPn }}")
             },
             knownBins = remember(version) { db.locations().map { it.name } },
+            onLabel = if (prefs != null) ({ labels = listOf(partLabel(p)) }) else null,
             onMove = { from, to, n ->
                 val moved = db.move(p.id, from, to, n) ?: 0
                 editing = null
@@ -334,6 +345,10 @@ fun InventoryScreen(
                 toast(if (moved > 0) "Moved $moved from $from to ${Locations.normalize(to)}" else "Nothing to move")
             },
         )
+    }
+
+    labels?.let { items ->
+        if (prefs != null) LabelDialog(items, prefs) { labels = null }
     }
 
     if (refreshing) {
@@ -595,6 +610,8 @@ private fun EditDialog(
     onDelete: () -> Unit,
     knownBins: List<String> = emptyList(),
     onMove: (from: String, to: String, qty: Int) -> Unit = { _, _, _ -> },
+    /** Make a QR label for this part; null hides the button. */
+    onLabel: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val startBins = remember { part.bins() }
@@ -641,6 +658,7 @@ private fun EditDialog(
                     if (part.datasheetUrl.isNotBlank()) {
                         TextButton(onClick = { openLink(context, part.datasheetUrl) }) { Text("Datasheet") }
                     }
+                    if (onLabel != null) TextButton(onClick = onLabel) { Text("Label") }
                 }
                 OutlinedTextField(description, { description = it }, label = { Text("Description") })
                 CategoryPicker(category) { category = it }

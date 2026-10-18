@@ -13,6 +13,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.QrCode2
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -45,6 +49,8 @@ fun LocationsScreen(db: InventoryDb, prefs: Prefs, onBack: () -> Unit, onOpen: (
     var version by remember { mutableIntStateOf(0) }
     val bins = remember(version) { db.locations() }
     var renaming by remember { mutableStateOf<LocationSummary?>(null) }
+    var labelMenu by remember { mutableStateOf<String?>(null) }
+    var labels by remember { mutableStateOf<List<LabelItem>?>(null) }
 
     Scaffold(
         topBar = {
@@ -76,6 +82,21 @@ fun LocationsScreen(db: InventoryDb, prefs: Prefs, onBack: () -> Unit, onOpen: (
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
+                            Box {
+                                IconButton(onClick = { labelMenu = b.name }) {
+                                    Icon(Icons.Filled.QrCode2, contentDescription = "Labels for ${b.name}")
+                                }
+                                DropdownMenu(expanded = labelMenu == b.name, onDismissRequest = { labelMenu = null }) {
+                                    DropdownMenuItem(text = { Text("Bin label") }, onClick = {
+                                        labelMenu = null
+                                        labels = listOf(binLabel(b.name, b.parts))
+                                    })
+                                    DropdownMenuItem(text = { Text("Labels for its ${b.parts} part${if (b.parts == 1) "" else "s"}") }, onClick = {
+                                        labelMenu = null
+                                        labels = db.all().filter { Locations.keyOf(it.bins(), b.name) != null }.map(::partLabel)
+                                    })
+                                }
+                            }
                             IconButton(onClick = { renaming = b }) {
                                 Icon(Icons.Filled.Edit, contentDescription = "Rename ${b.name}")
                             }
@@ -85,6 +106,8 @@ fun LocationsScreen(db: InventoryDb, prefs: Prefs, onBack: () -> Unit, onOpen: (
             }
         }
     }
+
+    labels?.let { items -> LabelDialog(items, prefs) { labels = null } }
 
     renaming?.let { b ->
         var name by remember(b.name) { mutableStateOf(if (b.name == Locations.UNASSIGNED) "" else b.name) }

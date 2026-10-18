@@ -23,6 +23,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import com.partstock.scanner.parse.LabelBarcode
+import com.partstock.scanner.parse.LabelCodes
+import com.partstock.scanner.parse.Locations
 import com.partstock.scanner.parse.LabelParser
 import com.partstock.scanner.parse.ParsedPart
 import com.partstock.scanner.parse.ScanMerger
@@ -46,7 +48,7 @@ private sealed interface Screen {
     /** [photo] is one of the photos that was read, shown on the review screen to compare against. */
     data class Review(val part: ParsedPart, val photo: Bitmap? = null) : Screen
     /** [bin] = show only the parts in that bin (opened from the Locations screen). */
-    data class Inventory(val bin: String? = null) : Screen
+    data class Inventory(val bin: String? = null, val openPart: Long? = null) : Screen
     data object Locations : Screen
     data object Settings : Screen
     data object Projects : Screen
@@ -79,12 +81,23 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
             partCount = partCount,
             onInventory = { screen = Screen.Inventory() },
             onSettings = { screen = Screen.Settings },
-            readBarcodes = prefs.readBarcodes,
+            // Always read barcodes so the app's own QR labels work; label barcodes only count when that's on.
+            readBarcodes = true,
             onFrames = { frames, photo, codes ->
-                // Barcodes are read exactly: where one disagrees with OCR, the barcode wins.
-                val part = LabelBarcode.apply(ScanMerger.merge(frames.map { LabelParser.parse(it) }), codes)
-                if (part.rawText.isBlank()) toast("No text found. Move closer and avoid glare.")
-                else screen = Screen.Review(part, photo)
+                val own = LabelCodes.first(codes)
+                if (own != null && own.isPart()) {
+                    if (db.all().any { it.id == own.partId }) screen = Screen.Inventory(openPart = own.partId)
+                    else toast("That label's part is no longer in the inventory")
+                } else if (own != null) {
+                    prefs.lastLocation = Locations.plain(own.bin)
+                    toast("Bin set to ${Locations.normalize(own.bin)} for the next saves")
+                } else {
+                    // Barcodes are read exactly: where one disagrees with OCR, the barcode wins.
+                    val labelCodes = if (prefs.readBarcodes) codes.filterNot { LabelCodes.isOurs(it) } else emptyList()
+                    val part = LabelBarcode.apply(ScanMerger.merge(frames.map { LabelParser.parse(it) }), labelCodes)
+                    if (part.rawText.isBlank()) toast("No text found. Move closer and avoid glare.")
+                    else screen = Screen.Review(part, photo)
+                }
             },
             onError = ::toast,
         )
@@ -133,6 +146,8 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
                 onLocations = { screen = Screen.Locations },
                 bin = s.bin,
                 onClearBin = { screen = Screen.Inventory() },
+                prefs = prefs,
+                openPart = s.openPart,
             )
         }
 

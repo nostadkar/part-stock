@@ -127,6 +127,13 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   of boards to see what's short and how many to order (rounded up like the reorder list), and share or save that as
   the reorder CSV. *Build N* subtracts per board × N from every matched part (never below 0, confirm first). Deleting
   a project leaves stock alone.
+- **QR labels**: *Label* in a part's dialog, *Make QR labels for the shown parts…* in the Inventory share menu (filter
+  by category or bin first), or the QR icon next to a bin on the Locations screen (a bin label, or labels for all its
+  parts). Pick 62 × 29 mm (Brother DK), 2 × 1 in thermal, or a Letter sheet of 30 (Avery 5160), then *Share* the PDF to
+  your label printer's app or *Print* with Android printing. Each label has a QR code with a short app-only text
+  (`PS:P:<part id>` or `PS:L:<bin>`) plus part number, description and bin. Point the scan screen at a label and tap the
+  shutter: a part label opens that part (to use or correct stock), a bin label sets the bin for the next saves. Other QR
+  codes are ignored. The PDF is drawn on the phone; nothing is sent anywhere.
 - **Low stock**: set an optional *Minimum* in a part's edit dialog. Parts at or below it show their count in red,
   the *Low stock* chip lists them and the summary line counts them. Export → *Reorder list CSV* lists the parts below
   their minimum with the quantity to order (minimum − on hand, rounded up: exact below 10, then to 5s, 10s, 50s, 100s),
@@ -169,6 +176,8 @@ app/src/main/java/com/partstock/scanner/
   ReviewScreen.kt            Edit fields, stock check, save
   InventoryScreen.kt         List, search, edit, move between bins, delete, export
   LocationsScreen.kt         Bins with part / piece counts, rename everywhere
+  Labels.kt                  QR label PDFs (PdfDocument + ZXing encoder), share / print
+  parse/LabelCodes.java      QR label payloads PS:P:<id> / PS:L:<bin> (pure Java, unit tested)
   parse/Locations.java       Stock per bin: add, set, use, move, rename, CSV column (pure Java, unit tested)
   InventoryDb.kt             SQLite storage + CSV
   OrderImport.kt             Import a Mouser / DigiKey order CSV

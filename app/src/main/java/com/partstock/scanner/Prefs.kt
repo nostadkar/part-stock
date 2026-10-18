@@ -35,6 +35,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("readBarcodes", true)
         set(v) = sp.edit().putBoolean("readBarcodes", v).apply()
 
+    /** Label size last used for QR labels ([LabelSize] name); blank = pick by count. */
+    var labelSize: String
+        get() = sp.getString("labelSize", "") ?: ""
+        set(v) = sp.edit().putString("labelSize", v).apply()
+
     /** Outcome of the last automatic backup, shown in Settings. */
     var autoBackupStatus: String
         get() = sp.getString("autoBackupStatus", "") ?: ""
