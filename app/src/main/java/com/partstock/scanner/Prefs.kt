@@ -25,6 +25,11 @@ class Prefs(context: Context) {
         get() = sp.getString("autoBackupUri", "") ?: ""
         set(v) = sp.edit().putString("autoBackupUri", v).apply()
 
+    /** Look the part up on Mouser as soon as the review screen opens (only when a key is saved). */
+    var autoMouserLookup: Boolean
+        get() = sp.getBoolean("autoMouserLookup", true)
+        set(v) = sp.edit().putBoolean("autoMouserLookup", v).apply()
+
     /** Outcome of the last automatic backup, shown in Settings. */
     var autoBackupStatus: String
         get() = sp.getString("autoBackupStatus", "") ?: ""

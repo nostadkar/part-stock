@@ -28,6 +28,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -53,6 +54,7 @@ import androidx.compose.ui.unit.dp
 fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: () -> Unit) {
     var key by remember { mutableStateOf("") }
     var saved by remember { mutableStateOf(secrets.hasMouserKey()) }
+    var autoLookup by remember { mutableStateOf(prefs.autoMouserLookup) }
     var status by remember { mutableStateOf<String?>(null) }
     var dkId by remember { mutableStateOf("") }
     var dkSecret by remember { mutableStateOf("") }
@@ -198,6 +200,22 @@ fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: 
                 }
             }
             status?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+            if (saved) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Look up on Mouser after each scan", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "Fills in the price as soon as a label is read, without tapping the button.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = autoLookup, onCheckedChange = {
+                        autoLookup = it
+                        prefs.autoMouserLookup = it
+                    })
+                }
+            }
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             Text("DigiKey API (Client ID and Secret)", style = MaterialTheme.typography.titleMedium)

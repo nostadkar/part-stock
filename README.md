@@ -57,6 +57,10 @@ To build locally instead: open the folder in Android Studio and press Run. Min A
 - **Settings → Mouser Search API key** turns on "Look up price on Mouser" in the review screen, which fills in the
   price (at your bag quantity), the official product link, and corrects an OCR slip in the part number.
 
+- **Automatic lookup**: with a Mouser key saved, the review screen starts the Mouser lookup as soon as it opens
+  ("Checking Mouser…" under the unit cost; the form stays usable and you can save before it finishes). It uses the
+  Mouser P/N on Mouser labels, otherwise the MPN. It runs once per scan; the button is there for a retry after you edit
+  the part number. Turn it off in Settings → *Look up on Mouser after each scan*.
 - **Refresh prices** (circular-arrow icon on the Inventory screen) looks up every part with a Mouser part number and
   updates its unit cost, description, link and category, then shows e.g. "Updated 38, not found 2". It sends one request
   every 2.2 s to stay under Mouser's limit of about 30 a minute (so 100 parts take about 4 minutes; keep the screen

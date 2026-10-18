@@ -97,6 +97,7 @@ fun ReviewScreen(
     var datasheetUrl by remember { mutableStateOf("") }
     var apiSpecs by remember { mutableStateOf(PartSpecs.EMPTY) }
     var looking by remember { mutableStateOf(false) }
+    var lookingAt by remember { mutableStateOf("") } // "Mouser" / "DigiKey" while a lookup runs
     var lookupMsg by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val mouserKey = remember { secrets.getMouserKey() }
@@ -163,16 +164,18 @@ fun ReviewScreen(
         }
     }
 
-    fun lookupMouser() {
+    /** [auto]: started by the review screen itself, so stay quiet when there's no part number to look up. */
+    fun lookupMouser(auto: Boolean = false) {
         val key = mouserKey ?: return
         val pn = if (part.distributor == ParsedPart.MOUSER && distributorPn.isNotBlank()) distributorPn.trim() else mpn.trim()
         if (pn.isBlank()) {
-            lookupMsg = "Enter a part number first."
+            if (!auto) lookupMsg = "Enter a part number first."
             return
         }
         val q = qty.trim().toIntOrNull() ?: 1
         scope.launch {
             looking = true
+            lookingAt = "Mouser"
             lookupMsg = null
             try {
                 // 1. As read, accepting the nearest result if one or two characters were misread.
@@ -241,6 +244,7 @@ fun ReviewScreen(
         val q = qty.trim().toIntOrNull() ?: 1
         scope.launch {
             looking = true
+            lookingAt = "DigiKey"
             lookupMsg = null
             try {
                 var found: DigiKeyPart? = null
@@ -309,6 +313,12 @@ fun ReviewScreen(
                 looking = false
             }
         }
+    }
+
+    // Look up the price on Mouser right away (Settings switch, on by default once a key is saved). Runs once per
+    // scan: editing the part number or quantity afterwards doesn't re-run it; the button is there for a retry.
+    LaunchedEffect(Unit) {
+        if (mouserKey != null && prefs.autoMouserLookup) lookupMouser(auto = true)
     }
 
     fun save() {
@@ -461,6 +471,16 @@ fun ReviewScreen(
                 },
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (looking) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Text(
+                        if (lookingAt.isNotBlank()) "Checking $lookingAt…" else "Checking…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             if (isDigiKeyLabel && digiKey != null) {
                 OutlinedButton(onClick = ::lookupDigiKey, enabled = !looking, modifier = Modifier.fillMaxWidth()) {
                     if (looking) CircularProgressIndicator(Modifier.size(18.dp)) else Text("Look up on DigiKey")
@@ -473,7 +493,7 @@ fun ReviewScreen(
                 )
             }
             if (mouserKey != null) {
-                OutlinedButton(onClick = ::lookupMouser, enabled = !looking, modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = { lookupMouser() }, enabled = !looking, modifier = Modifier.fillMaxWidth()) {
                     if (looking) CircularProgressIndicator(Modifier.size(18.dp)) else Text("Look up price on Mouser")
                 }
             } else if (!isDigiKeyLabel) {
