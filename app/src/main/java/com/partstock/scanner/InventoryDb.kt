@@ -8,6 +8,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import com.partstock.scanner.parse.Categories
 import com.partstock.scanner.parse.InventoryCsv
 import com.partstock.scanner.parse.Links
+import com.partstock.scanner.parse.PartSpecs
 import com.partstock.scanner.parse.ReorderList
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -41,6 +42,19 @@ data class PartRow(
     /** Where the unit cost came from ("Mouser", "DigiKey") and when; blank for a typed or imported price. */
     val priceSource: String = "",
     val priceCheckedAt: String = "",
+    /** Value (10kΩ, 100nF), tolerance, voltage and package; blank when unknown. */
+    val specValue: String = "",
+    val tolerance: String = "",
+    val voltage: String = "",
+    val pkg: String = "",
+    val datasheetUrl: String = "",
+)
+
+fun PartRow.specs(): PartSpecs = PartSpecs(specValue, tolerance, voltage, pkg)
+
+/** Search box match: text in any field, or equal values (10k = 10kΩ = 10000, 0.1uF = 100nF) and packages. */
+fun PartRow.matches(query: String): Boolean = PartSpecs.matches(
+    query, listOf(mpn, description, manufacturer, location, distributorPn, customerPn, category), specs(),
 )
 
 /** At or below its minimum (the Inventory screen's "Low stock" filter). */
@@ -84,6 +98,10 @@ data class ScanEntry(
     val kitPerBoard: Int? = null,
     val kitQuantity: Int? = null,
     val kitItem: Int? = null,
+    /** Datasheet link from a lookup; blank otherwise. */
+    val datasheetUrl: String = "",
+    /** Specs from a lookup's attributes; blanks are filled from [description] when saving. */
+    val specs: PartSpecs = PartSpecs.EMPTY,
 )
 
 /** A kit with parts registered from scanned Entrust kit labels. */
@@ -105,13 +123,16 @@ data class LookupUpdate(
     val category: String,
     val productUrl: String,
     val source: String,
+    val datasheetUrl: String = "",
+    /** From the distributor's attributes; blanks are filled from [description]. */
+    val specs: PartSpecs = PartSpecs.EMPTY,
 )
 
 /** What a CSV restore did (or would do, for a dry run). */
 data class ImportSummary(val rows: Int, val added: Int, val updated: Int, val removed: Int)
 
 /** Inventory stored on the phone: one row per part, plus a log of every save. */
-class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 7) {
+class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 8) {
 
     /** Called after every change to the parts table (used for auto backup). */
     @Volatile var onChanged: (() -> Unit)? = null
@@ -130,7 +151,9 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                 unit_cost REAL, product_url TEXT NOT NULL DEFAULT '',
                 category TEXT NOT NULL DEFAULT '', min_qty INTEGER,
                 category_picked INTEGER NOT NULL DEFAULT 0, price_source TEXT NOT NULL DEFAULT '',
-                price_checked_at TEXT NOT NULL DEFAULT '')"""
+                price_checked_at TEXT NOT NULL DEFAULT '', spec_value TEXT NOT NULL DEFAULT '',
+                tolerance TEXT NOT NULL DEFAULT '', voltage TEXT NOT NULL DEFAULT '',
+                package TEXT NOT NULL DEFAULT '', datasheet_url TEXT NOT NULL DEFAULT '')"""
         )
         db.execSQL(
             """CREATE TABLE scan_log (
@@ -185,6 +208,23 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             db.execSQL("ALTER TABLE parts ADD COLUMN price_source TEXT NOT NULL DEFAULT ''")
             db.execSQL("ALTER TABLE parts ADD COLUMN price_checked_at TEXT NOT NULL DEFAULT ''")
         }
+        if (oldVersion < 8) {
+            // Adds columns only; value / tolerance / voltage / package are filled in from each saved description.
+            for (col in listOf("spec_value", "tolerance", "voltage", "package", "datasheet_url")) {
+                db.execSQL("ALTER TABLE parts ADD COLUMN $col TEXT NOT NULL DEFAULT ''")
+            }
+            val rows = db.rawQuery("SELECT id, description FROM parts", null).use { c ->
+                buildList { while (c.moveToNext()) add(c.getLong(0) to c.getString(1).orEmpty()) }
+            }
+            for ((id, desc) in rows) {
+                val sp = PartSpecs.fromDescription(desc)
+                if (sp.isEmpty) continue
+                db.execSQL(
+                    "UPDATE parts SET spec_value = ?, tolerance = ?, voltage = ?, package = ? WHERE id = ?",
+                    arrayOf(sp.value, sp.tolerance, sp.voltage, sp.pkg, id),
+                )
+            }
+        }
     }
 
     /** Matches on MPN, then customer PN, then distributor PN, ignoring case and spaces. */
@@ -215,6 +255,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         try {
             val now = now()
             val hit = find(e.mpn, e.customerPn, e.distributorPn)
+            val specs = e.specs.orElse(PartSpecs.fromDescription(e.description))
             val total: Int
             val partId: Long
             if (hit != null) {
@@ -244,6 +285,9 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                         put("price_source", ""); put("price_checked_at", "") // typed in: no longer from a lookup
                     }
                     if (e.productUrl.isNotBlank()) put("product_url", e.productUrl)
+                    if (e.datasheetUrl.isNotBlank()) put("datasheet_url", e.datasheetUrl)
+                    // A lookup's specs replace older ones; a label only fills what's missing.
+                    putSpecs(specs, if (e.descriptionFromMouser) null else r.specs())
                     put("source", appendUnique(r.source, e.source))
                     put("notes", appendUnique(r.notes, e.notes))
                     put("scans", r.scans + 1)
@@ -260,6 +304,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                     put("source", e.source); put("notes", e.notes); put("date_code", e.dateCode)
                     put("ref_des", e.refDes); put("scans", 1); put("updated_at", now)
                     put("product_url", e.productUrl); put("category", e.category)
+                    put("datasheet_url", e.datasheetUrl); putSpecs(specs, null)
                     if (e.categoryPicked) put("category_picked", 1)
                     if (e.unitCost != null) put("unit_cost", e.unitCost)
                     if (e.unitCost != null && e.priceSource.isNotBlank()) {
@@ -318,6 +363,8 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                         take("product_url", r.link); take("source", r.source); take("notes", r.notes)
                         take("date_code", r.dateCode); take("ref_des", r.refDes)
                         if (r.category.isNotBlank()) put("category", r.category)
+                        take("spec_value", r.value); take("tolerance", r.tolerance); take("voltage", r.voltage)
+                        take("package", r.pkg); take("datasheet_url", r.datasheet)
                         r.unitCost?.let { put("unit_cost", it) }
                         r.minimum?.let { put("min_qty", it) }
                         put("scans", r.scans ?: old.scans)
@@ -332,6 +379,8 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                         put("source", r.source); put("notes", r.notes); put("date_code", r.dateCode)
                         put("ref_des", r.refDes); put("scans", r.scans ?: 1); put("updated_at", stamp)
                         put("product_url", r.link); put("category", category)
+                        put("datasheet_url", r.datasheet)
+                        putSpecs(PartSpecs(r.value, r.tolerance, r.voltage, r.pkg).orElse(PartSpecs.fromDescription(r.description)), null)
                         r.unitCost?.let { put("unit_cost", it) }
                         r.minimum?.let { put("min_qty", it) }
                     })
@@ -379,6 +428,10 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             put("quantity", quantity); put("location", location.trim()); put("category", category)
             put("description", description.trim()); put("updated_at", now())
         }
+        // A new description: re-read value / package from it, keeping what it doesn't mention.
+        if (old != null && description.trim() != old.description) {
+            v.putSpecs(PartSpecs.fromDescription(description).orElse(old.specs()), null)
+        }
         // Changing the category by hand marks it as picked, so price refreshes don't move it again.
         if (old != null && category != old.category) v.put("category_picked", 1)
         if (unitCost != null) v.put("unit_cost", unitCost) else v.putNull("unit_cost")
@@ -409,6 +462,8 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             if (u.description.isNotBlank()) put("description", u.description.trim())
             if (u.productUrl.isNotBlank()) put("product_url", u.productUrl)
             if (!old.categoryPicked && u.category.isNotBlank()) put("category", u.category)
+            if (u.datasheetUrl.isNotBlank()) put("datasheet_url", u.datasheetUrl)
+            putSpecs(u.specs.orElse(PartSpecs.fromDescription(u.description)), null)
             put("updated_at", now)
         }
         writableDatabase.update("parts", v, "id = ?", arrayOf(id.toString()))
@@ -509,6 +564,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                 it.unitCost?.let { c -> plain(c * it.quantity) }.orEmpty(),
                 it.location, it.distributor, it.distributorPn, it.customerPn, it.link(), it.source, it.notes,
                 it.dateCode, it.refDes, it.scans.toString(), it.updatedAt, it.minQty?.toString().orEmpty(),
+                it.specValue, it.tolerance, it.voltage, it.pkg, it.datasheetUrl,
             )
         }
         return csv(header, rows)
@@ -541,6 +597,20 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         return csv(header, rows)
     }
 
+    /**
+     * Writes the non-blank spec fields. With [current], only fills fields that are blank there (a label read never
+     * overwrites specs that came from a lookup).
+     */
+    private fun ContentValues.putSpecs(sp: PartSpecs, current: PartSpecs?) {
+        val pairs = listOf(
+            Triple("spec_value", sp.value, current?.value), Triple("tolerance", sp.tolerance, current?.tolerance),
+            Triple("voltage", sp.voltage, current?.voltage), Triple("package", sp.pkg, current?.pkg),
+        )
+        for ((col, new, cur) in pairs) {
+            if (new.isNotBlank() && (cur == null || cur.isBlank())) put(col, new)
+        }
+    }
+
     private fun ContentValues.take(column: String, new: String) {
         if (new.isNotBlank()) put(column, new)
     }
@@ -569,6 +639,8 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             categoryPicked = int("category_picked") != 0,
             priceSource = str("price_source"),
             priceCheckedAt = str("price_checked_at"),
+            specValue = str("spec_value"), tolerance = str("tolerance"), voltage = str("voltage"),
+            pkg = str("package"), datasheetUrl = str("datasheet_url"),
         )
     }
 

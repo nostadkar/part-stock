@@ -47,6 +47,12 @@ To build locally instead: open the folder in Android Studio and press Run. Min A
 - **Categories**: every part goes in a bucket (Resistors, Capacitors, Transistors, Power ICs, Connectors…), taken from
   Mouser's category when looked up, otherwise from the description. Change it with the Category button. The Inventory
   screen groups by category with filter chips, and the CSV has a Category column.
+- **Value, package and datasheet**: the value (10kΩ, 100nF, 4.7µH), tolerance, voltage and package (0603, SOT-23,
+  MSOP-16) are read from the description (or Mouser's attributes) and shown as small chips on each inventory row. A
+  lookup also saves the datasheet link (*Datasheet* button in the edit dialog). Search understands values and packages:
+  `10k 0603` finds a 10kΩ 0603 resistor (10k = 10K = 10kΩ = 10000 = 4k7-style codes), `0.1uF` = `100nF`, `sot23` =
+  `SOT-23`, `1%` matches the tolerance. Existing parts get these filled in from their description when you update.
+  The CSV has Value, Tolerance, Voltage, Package and Datasheet columns.
 - **Unit cost** is an optional field (labels don't print prices). The Inventory screen totals the value.
 - **Settings → Mouser Search API key** turns on "Look up price on Mouser" in the review screen, which fills in the
   price (at your bag quantity), the official product link, and corrects an OCR slip in the part number.

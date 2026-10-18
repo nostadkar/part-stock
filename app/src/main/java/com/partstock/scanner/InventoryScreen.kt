@@ -97,11 +97,8 @@ fun InventoryScreen(db: InventoryDb, secrets: SecretStore, onBack: () -> Unit) {
     val lowCount = remember(parts) { parts.count { it.isLow() } }
     val tracked = remember(parts) { parts.any { it.minQty != null } }
     val shown = remember(parts, query, bucket, lowOnly) {
-        val q = InventoryDb.norm(query)
         parts.filter { p ->
-            (bucket == null || p.category == bucket) && (!lowOnly || p.isLow()) &&
-                (q.isEmpty() || listOf(p.mpn, p.description, p.manufacturer, p.location, p.distributorPn, p.customerPn, p.category)
-                    .any { InventoryDb.norm(it).contains(q) })
+            (bucket == null || p.category == bucket) && (!lowOnly || p.isLow()) && (query.isBlank() || p.matches(query))
         }
     }
     val groups = remember(shown) {
@@ -166,7 +163,7 @@ fun InventoryScreen(db: InventoryDb, secrets: SecretStore, onBack: () -> Unit) {
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                placeholder = { Text("Search part, description, bin") },
+                placeholder = { Text("Search part, value, package, bin") },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
@@ -235,6 +232,8 @@ fun InventoryScreen(db: InventoryDb, secrets: SecretStore, onBack: () -> Unit) {
                                     fontWeight = FontWeight.SemiBold,
                                 )
                                 if (p.description.isNotBlank()) Text(p.description, style = MaterialTheme.typography.bodySmall)
+                                val chips = p.specs().chips()
+                                if (chips.isNotEmpty()) SpecChips(chips, Modifier.padding(top = 4.dp))
                                 val meta = listOf(p.manufacturer, if (p.location.isNotBlank()) "Bin ${p.location}" else "")
                                     .filter { it.isNotBlank() }.joinToString(" · ")
                                 if (meta.isNotBlank()) {
@@ -348,7 +347,7 @@ private fun RefreshPricesDialog(db: InventoryDb, secrets: SecretStore, onClose: 
                         withContext(Dispatchers.IO) {
                             db.applyLookup(
                                 p.id,
-                                LookupUpdate(r.unitPrice, r.description, cat, r.url, "Mouser"),
+                                LookupUpdate(r.unitPrice, r.description, cat, r.url, "Mouser", r.datasheetUrl, r.specs),
                             )
                         }
                         updated++
@@ -562,8 +561,15 @@ private fun EditDialog(
                     if (part.customerPn.isNotBlank()) "Cust: ${part.customerPn}" else "",
                 ).filter { it.isNotBlank() }.joinToString(" · ")
                 if (ids.isNotBlank()) Text(ids, style = MaterialTheme.typography.bodySmall)
-                if (link.isNotBlank()) {
-                    TextButton(onClick = { openLink(context, link) }) { Text("Open on ${Links.siteName(link)}") }
+                val chips = part.specs().chips()
+                if (chips.isNotEmpty()) SpecChips(chips)
+                Row {
+                    if (link.isNotBlank()) {
+                        TextButton(onClick = { openLink(context, link) }) { Text("Open on ${Links.siteName(link)}") }
+                    }
+                    if (part.datasheetUrl.isNotBlank()) {
+                        TextButton(onClick = { openLink(context, part.datasheetUrl) }) { Text("Datasheet") }
+                    }
                 }
                 OutlinedTextField(description, { description = it }, label = { Text("Description") })
                 CategoryPicker(category) { category = it }

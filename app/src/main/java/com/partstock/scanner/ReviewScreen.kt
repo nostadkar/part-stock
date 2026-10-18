@@ -49,6 +49,7 @@ import com.partstock.scanner.parse.Categories
 import com.partstock.scanner.parse.Links
 import com.partstock.scanner.parse.ParsedPart
 import com.partstock.scanner.parse.PartNumberVariants
+import com.partstock.scanner.parse.PartSpecs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -81,6 +82,9 @@ fun ReviewScreen(
     var priceSource by remember { mutableStateOf("") } // "Mouser" / "DigiKey" when a lookup filled the price
     // Product page returned by Mouser's lookup; otherwise a link is built from the part numbers.
     var apiUrl by remember { mutableStateOf<String?>(null) }
+    // Datasheet link and value / package attributes from a lookup.
+    var datasheetUrl by remember { mutableStateOf("") }
+    var apiSpecs by remember { mutableStateOf(PartSpecs.EMPTY) }
     var looking by remember { mutableStateOf(false) }
     var lookupMsg by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
@@ -161,6 +165,8 @@ fun ReviewScreen(
                         priceSource = "Mouser"
                     }
                     if (r.url.isNotBlank()) apiUrl = r.url
+                    if (r.datasheetUrl.isNotBlank()) datasheetUrl = r.datasheetUrl
+                    apiSpecs = r.specs
                     if (part.distributor == ParsedPart.MOUSER && r.mouserPn.isNotBlank()) distributorPn = r.mouserPn
                     if (r.description.isNotBlank()) {
                         description = r.description
@@ -230,6 +236,7 @@ fun ReviewScreen(
                         priceSource = "DigiKey"
                     }
                     if (r.url.isNotBlank()) apiUrl = r.url
+                    if (r.datasheetUrl.isNotBlank()) datasheetUrl = r.datasheetUrl
                     if (isDigiKeyLabel && r.digiKeyPn.isNotBlank() && dpn.isNotBlank() &&
                         PartNumberVariants.distance(r.digiKeyPn, dpn) in 1..2
                     ) {
@@ -291,6 +298,7 @@ fun ReviewScreen(
                     bagFingerprint = fingerprint.orEmpty(),
                     kitName = part.kitName.orEmpty(), kitPerBoard = part.kitPerBoard,
                     kitQuantity = part.kitQuantity, kitItem = part.kitItem,
+                    datasheetUrl = datasheetUrl, specs = apiSpecs,
                 )
                 val name = mpn.ifBlank { customerPn.ifBlank { distributorPn } }
                 try {
@@ -339,6 +347,15 @@ fun ReviewScreen(
             Field("Manufacturer part number", mpn, { mpn = it }, mono = true,
                 hint = if (part.mpnDerived) "Worked out from the Mouser P/N — check it" else null)
             Field("Description", description, { description = it }, singleLine = false)
+            val specs = remember(description, apiSpecs) { apiSpecs.orElse(PartSpecs.fromDescription(description)) }
+            if (!specs.isEmpty || datasheetUrl.isNotBlank()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SpecChips(specs.chips(), Modifier.weight(1f))
+                    if (datasheetUrl.isNotBlank()) {
+                        TextButton(onClick = { openLink(context, datasheetUrl) }) { Text("Datasheet") }
+                    }
+                }
+            }
             CategoryPicker(category) {
                 category = it
                 categoryPicked = true

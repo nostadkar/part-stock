@@ -10,7 +10,7 @@ import java.util.Map;
 
 /**
  * Reads and writes the inventory CSV (RFC 4180). Reading is forgiving: columns are found by header name in any order,
- * missing columns (older exports had no Category / Unit Cost / Link / Minimum) are left blank, quoted fields may hold commas,
+ * missing columns (older exports had no Category / Unit Cost / Link / Minimum / Value / Package / Datasheet) are left blank, quoted fields may hold commas,
  * quotes and line breaks, and CRLF or LF line endings both work.
  */
 public final class InventoryCsv {
@@ -20,13 +20,15 @@ public final class InventoryCsv {
     public static final List<String> HEADER = Collections.unmodifiableList(Arrays.asList(
             "Category", "MPN", "Description", "Manufacturer", "Quantity", "Unit Cost", "Total Value", "Location",
             "Distributor", "Distributor PN", "Customer PN", "Link", "Source", "Notes", "Date Code", "Ref Des",
-            "Scans", "Last Updated", "Minimum"));
+            "Scans", "Last Updated", "Minimum", "Value", "Tolerance", "Voltage", "Package", "Datasheet"));
 
     /** One part read from the file. Strings are never null; blank means the file had nothing there. */
     public static final class Row {
         public String category = "", mpn = "", description = "", manufacturer = "", location = "",
                 distributor = "", distributorPn = "", customerPn = "", link = "", source = "", notes = "",
                 dateCode = "", refDes = "", updatedAt = "";
+        /** Specs and datasheet link; blank in exports made before they existed. */
+        public String value = "", tolerance = "", voltage = "", pkg = "", datasheet = "";
         public int quantity;
         public Double unitCost;
         public Integer scans;
@@ -152,6 +154,11 @@ public final class InventoryCsv {
                 {"refdes", "refdes"},
                 {"scans", "scans"},
                 {"lastupdated", "lastupdated", "updated", "updatedat"},
+                {"value", "value"},
+                {"tolerance", "tolerance", "tol"},
+                {"voltage", "voltage", "voltagerating"},
+                {"package", "package", "pkg", "packagecase", "case"},
+                {"datasheet", "datasheet", "datasheeturl", "datasheetlink"},
                 {"minimum", "minimum", "min", "minqty", "minimumqty", "minimumquantity", "reorderpoint"},
         };
         for (String[] group : names) for (int i = 1; i < group.length; i++) ALIASES.put(group[i], group[0]);
@@ -197,6 +204,11 @@ public final class InventoryCsv {
             row.dateCode = get(rec, col, "datecode");
             row.refDes = get(rec, col, "refdes");
             row.updatedAt = get(rec, col, "lastupdated");
+            row.value = get(rec, col, "value");
+            row.tolerance = get(rec, col, "tolerance");
+            row.voltage = get(rec, col, "voltage");
+            row.pkg = get(rec, col, "package");
+            row.datasheet = get(rec, col, "datasheet");
             row.quantity = Math.max(0, parseInt(get(rec, col, "quantity"), 0));
             row.unitCost = parseCost(get(rec, col, "unitcost"));
             String s = get(rec, col, "scans");

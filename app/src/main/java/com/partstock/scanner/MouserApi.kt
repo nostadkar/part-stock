@@ -3,6 +3,7 @@ package com.partstock.scanner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.partstock.scanner.parse.PartNumberVariants
+import com.partstock.scanner.parse.PartSpecs
 import com.partstock.scanner.parse.PriceRefresh
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -21,6 +22,10 @@ data class MouserPart(
     val currency: String,
     /** Mouser's product category, e.g. "Switching Voltage Regulators". */
     val category: String = "",
+    /** Datasheet link from Mouser ("DataSheetUrl"); blank when none is listed. */
+    val datasheetUrl: String = "",
+    /** Value, tolerance, voltage and package from Mouser's attributes, filled from its description where missing. */
+    val specs: PartSpecs = PartSpecs.EMPTY,
 )
 
 /** A problem Mouser reported (bad key, rate limit). The message is safe to show: it never contains the key. */
@@ -125,16 +130,27 @@ object MouserApi {
                 currency = best.optString("Currency")
             }
         }
+        val attrs = LinkedHashMap<String, String>()
+        o.optJSONArray("ProductAttributes")?.let { a ->
+            for (i in 0 until a.length()) {
+                val at = a.optJSONObject(i) ?: continue
+                val name = at.optString("AttributeName")
+                if (name.isNotBlank() && !attrs.containsKey(name)) attrs[name] = at.optString("AttributeValue")
+            }
+        }
+        val description = o.optString("Description")
         return MouserPart(
             mouserPn = o.optString("MouserPartNumber"),
             mpn = o.optString("ManufacturerPartNumber"),
             manufacturer = o.optString("Manufacturer"),
-            description = o.optString("Description"),
+            description = description,
             url = o.optString("ProductDetailUrl"),
             unitPrice = price,
             priceAtQty = priceQty,
             currency = currency,
             category = o.optString("Category"),
+            datasheetUrl = o.optString("DataSheetUrl").trim().takeIf { it.startsWith("http") }.orEmpty(),
+            specs = PartSpecs.fromAttributes(attrs).orElse(PartSpecs.fromDescription(description)),
         )
     }
 

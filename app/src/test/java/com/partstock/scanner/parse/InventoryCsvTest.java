@@ -146,6 +146,25 @@ public class InventoryCsvTest {
         assertNull(res.rows.get(1).minimum);
         assertNull(res.rows.get(2).minimum);
         assertNull(InventoryCsv.read("MPN,Quantity\r\nA1,5\r\n").rows.get(0).minimum);
-        assertEquals("Minimum", InventoryCsv.HEADER.get(InventoryCsv.HEADER.size() - 1));
+        assertTrue(InventoryCsv.HEADER.contains("Minimum"));
+    }
+
+    @Test
+    public void readsSpecColumnsAndLeavesThemBlankInOldFiles() {
+        String csv = "MPN,Quantity,Value,Tolerance,Voltage,Package,Datasheet\r\n"
+                + "RC0603FR-0710KL,5,10k\u03a9,1%,,0603,https://example.com/ds.pdf\r\n";
+        InventoryCsv.Row r = InventoryCsv.read(csv).rows.get(0);
+        assertEquals("10k\u03a9", r.value);
+        assertEquals("1%", r.tolerance);
+        assertEquals("", r.voltage);
+        assertEquals("0603", r.pkg);
+        assertEquals("https://example.com/ds.pdf", r.datasheet);
+        InventoryCsv.Row old = InventoryCsv.read("MPN,Quantity\r\nA1,5\r\n").rows.get(0);
+        assertEquals("", old.value);
+        assertEquals("", old.pkg);
+        assertEquals("", old.datasheet);
+        int i = InventoryCsv.HEADER.indexOf("Minimum");
+        assertEquals("Value", InventoryCsv.HEADER.get(i + 1));
+        assertEquals("Datasheet", InventoryCsv.HEADER.get(InventoryCsv.HEADER.size() - 1));
     }
 }

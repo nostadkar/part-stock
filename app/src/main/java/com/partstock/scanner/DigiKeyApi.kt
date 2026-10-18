@@ -23,6 +23,8 @@ data class DigiKeyPart(
     val currency: String,
     /** Most specific DigiKey category first, then its parents, e.g. ["Single FETs, MOSFETs", "Transistors"]. */
     val categories: List<String> = emptyList(),
+    /** Datasheet link ("DatasheetUrl"); blank when none is listed. */
+    val datasheetUrl: String = "",
 )
 
 /** A problem DigiKey reported (bad credentials, rate limit). The message never contains the secret or a token. */
@@ -231,6 +233,8 @@ object DigiKeyApi {
             priceAtQty = priceQty,
             currency = "USD",
             categories = cats,
+            datasheetUrl = p.optString("DatasheetUrl").trim()
+                .let { if (it.startsWith("//")) "https:$it" else it }.takeIf { it.startsWith("http") }.orEmpty(),
         )
     }
 
