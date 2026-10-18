@@ -72,6 +72,8 @@ dependencies {
 
     // On-device text recognition with the model bundled in the APK (works offline, no Play Services download).
     implementation("com.google.mlkit:text-recognition:16.0.1")
+    // Label barcodes (DigiKey DataMatrix, Mouser 1D codes) as a cross-check for OCR; model bundled, works offline.
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 

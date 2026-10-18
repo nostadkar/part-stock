@@ -85,6 +85,14 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   (tap the preview to focus somewhere else), then reads 3 photos in a row and takes, for each field, the value
   most photos agree on, so a single misread character doesn't stick. Hold still for about two seconds.
   The foil bags glare: tilt the bag a little rather than using the light.
+- **Barcodes as a cross-check**: the same photos are also scanned for barcodes (ML Kit, offline). DigiKey's DataMatrix
+  (ECIA / MH10.8.2: `P` customer PN, `1P` MPN, `30P` DigiKey PN, `Q` quantity, `K` PO, `9D`/`10D` date code, `1T` lot)
+  and the DataMatrix on newer Mouser labels are decoded field by field; Mouser's 1D codes (one value each) are matched
+  to the OCR field they look like (same apart from I/1/L, O/0, E/F… or one character). Where a barcode and OCR
+  disagree, or OCR missed a field, the barcode value is used and the field shows "From barcode". A Mouser DataMatrix
+  gives the real MPN, so it isn't "worked out" from the P/N. OCR still reads everything else (Entrust and MyData
+  labels have no barcodes). The decoded values are listed under "Show text read from label". Turn it off in
+  Settings → *Read label barcodes*.
 - The review screen shows what it read and whether the part is already in stock
   ("Already in stock: 500 · after save: 529").
 - **Fix one field without rescanning**: the review screen shows the photo that was read (tap to zoom, pinch, double-tap)
@@ -127,6 +135,8 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
 app/src/main/java/com/partstock/scanner/
   parse/LabelParser.java     Label → fields (pure Java, unit tested)
   OcrEngine.kt               ML Kit text recognition
+  BarcodeEngine.kt           ML Kit barcode reading (raw values)
+  parse/LabelBarcode.java    MH10.8.2 DataMatrix / 1D barcode decoding and OCR cross-check (pure Java, unit tested)
   ScanScreen.kt              CameraX preview, capture, photo picker
   parse/ScanMerger.java      Votes field by field across a burst of reads
   Updater.kt                 Checks GitHub releases, downloads and installs a newer APK

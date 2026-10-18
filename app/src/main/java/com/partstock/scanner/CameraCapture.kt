@@ -25,8 +25,17 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-/** One photo read by OCR: its lines, the upright image size, and optionally a downscaled copy of the photo. */
-class CapturedFrame(val lines: List<OcrLine>, val width: Int, val height: Int, val photo: Bitmap?)
+/**
+ * One photo read by OCR: its lines, the upright image size, optionally a downscaled copy of the photo, and the raw
+ * values of any barcodes found on it (only when asked for).
+ */
+class CapturedFrame(
+    val lines: List<OcrLine>,
+    val width: Int,
+    val height: Int,
+    val photo: Bitmap?,
+    val codes: List<String> = emptyList(),
+)
 
 /** Longest side of the photo kept for the review screen (enough to zoom into a label, small in memory). */
 private const val PHOTO_MAX_SIDE = 2000
@@ -54,12 +63,16 @@ internal suspend fun <T> ListenableFuture<T>.awaitResult(): T = suspendCancellab
     }, Runnable::run)
 }
 
-/** Takes one photo and runs OCR on it; with [keepPhoto], also returns an upright, downscaled copy. */
+/**
+ * Takes one photo and runs OCR on it; with [keepPhoto], also returns an upright, downscaled copy; with
+ * [readBarcodes], also reads the barcodes on the same photo.
+ */
 @androidx.annotation.OptIn(ExperimentalGetImage::class)
 internal suspend fun captureAndRead(
     imageCapture: ImageCapture,
     context: Context,
     keepPhoto: Boolean = false,
+    readBarcodes: Boolean = false,
 ): CapturedFrame {
     val proxy = suspendCancellableCoroutine<ImageProxy> { cont ->
         imageCapture.takePicture(
@@ -78,7 +91,9 @@ internal suspend fun captureAndRead(
     try {
         val rotation = proxy.imageInfo.rotationDegrees
         val media = proxy.image ?: error("Camera returned no image")
-        val lines = OcrEngine.recognize(InputImage.fromMediaImage(media, rotation))
+        val input = InputImage.fromMediaImage(media, rotation)
+        val lines = OcrEngine.recognize(input)
+        val codes = if (readBarcodes) BarcodeEngine.scan(input) else emptyList()
         val sideways = rotation == 90 || rotation == 270
         val w = if (sideways) proxy.height else proxy.width
         val h = if (sideways) proxy.width else proxy.height
@@ -89,7 +104,7 @@ internal suspend fun captureAndRead(
                 null // the photo is only for comparing; the reading still counts
             }
         } else null
-        return CapturedFrame(lines, w, h, photo)
+        return CapturedFrame(lines, w, h, photo, codes)
     } finally {
         proxy.close()
     }

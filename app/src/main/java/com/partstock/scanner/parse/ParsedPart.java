@@ -38,6 +38,8 @@ public final class ParsedPart {
     /** Mouser only: order line item ("Line Item: 028"). */
     public String lineItem;
     public String rawText = "";
+    /** Fields taken from a label barcode because OCR missed them or read them differently (see LabelBarcode). */
+    public final java.util.Set<String> fromBarcode = new java.util.LinkedHashSet<>();
 
     /** Key the sheet matches on: MPN, else customer PN, else distributor PN. */
     public String inventoryKey() {

@@ -54,6 +54,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.partstock.scanner.parse.Categories
 import com.partstock.scanner.parse.FieldReader
+import com.partstock.scanner.parse.LabelBarcode
 import com.partstock.scanner.parse.OcrLine
 import com.partstock.scanner.parse.Links
 import com.partstock.scanner.parse.ParsedPart
@@ -409,7 +410,13 @@ fun ReviewScreen(
             StockBanner(existing, hasKey, qty.trim().toIntOrNull(), addMode)
 
             Field("Manufacturer part number", mpn, { mpn = it }, mono = true,
-                hint = if (part.mpnDerived) "Worked out from the Mouser P/N — check it" else null,
+                hint = when {
+                    part.mpnDerived && LabelBarcode.F_MPN in part.fromBarcode ->
+                        "Worked out from the Mouser P/N (from barcode) — check it"
+                    part.mpnDerived -> "Worked out from the Mouser P/N — check it"
+                    LabelBarcode.F_MPN in part.fromBarcode -> FROM_BARCODE
+                    else -> null
+                },
                 onRescan = { rescan = FieldReader.Field.MPN })
             Field("Description", description, { description = it }, singleLine = false,
                 onRescan = { rescan = FieldReader.Field.DESCRIPTION })
@@ -434,6 +441,11 @@ fun ReviewScreen(
                     onValueChange = { v -> qty = v.filter { it.isDigit() } },
                     label = { Text("Quantity") },
                     singleLine = true,
+                    supportingText = if (LabelBarcode.F_QTY in part.fromBarcode) {
+                        { Text(FROM_BARCODE) }
+                    } else {
+                        null
+                    },
                     trailingIcon = { RescanIcon("quantity") { rescan = FieldReader.Field.QUANTITY } },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.weight(1f),
@@ -518,9 +530,11 @@ fun ReviewScreen(
 
             Field(
                 (part.distributor ?: "Distributor") + " part number", distributorPn, { distributorPn = it }, mono = true,
+                hint = if (LabelBarcode.F_DIST_PN in part.fromBarcode) FROM_BARCODE else null,
                 onRescan = { rescan = FieldReader.Field.DISTRIBUTOR_PN },
             )
             Field("Customer / Entrust PN", customerPn, { customerPn = it }, mono = true,
+                hint = if (LabelBarcode.F_CUST_PN in part.fromBarcode) FROM_BARCODE else null,
                 onRescan = { rescan = FieldReader.Field.CUSTOMER_PN })
             Field("Notes", notes, { notes = it }, singleLine = false)
 
@@ -650,6 +664,9 @@ private fun KitHint(part: ParsedPart, onUse: (Int) -> Unit) {
         }
     }
 }
+
+/** Shown under a field whose value came from the label's barcode rather than OCR. */
+private const val FROM_BARCODE = "From barcode"
 
 @Composable
 private fun Field(

@@ -55,6 +55,7 @@ fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: 
     var key by remember { mutableStateOf("") }
     var saved by remember { mutableStateOf(secrets.hasMouserKey()) }
     var autoLookup by remember { mutableStateOf(prefs.autoMouserLookup) }
+    var readBarcodes by remember { mutableStateOf(prefs.readBarcodes) }
     var status by remember { mutableStateOf<String?>(null) }
     var dkId by remember { mutableStateOf("") }
     var dkSecret by remember { mutableStateOf("") }
@@ -215,6 +216,23 @@ fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: 
                         prefs.autoMouserLookup = it
                     })
                 }
+            }
+
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Read label barcodes", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Also reads the DigiKey DataMatrix and Mouser barcodes on each scan. Barcodes are exact, so " +
+                            "where one disagrees with the text read, the barcode is used and the field says \"from barcode\".",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = readBarcodes, onCheckedChange = {
+                    readBarcodes = it
+                    prefs.readBarcodes = it
+                })
             }
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))

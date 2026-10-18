@@ -85,9 +85,11 @@ fun ScanScreen(
     onSettings: () -> Unit,
     /**
      * One list of OCR lines per photo (the camera sends a short burst; a picked photo sends one), plus one of the
-     * photos so the review screen can show what was read.
+     * photos so the review screen can show what was read, plus the raw values of any barcodes found on them.
      */
-    onFrames: (List<List<OcrLine>>, Bitmap?) -> Unit,
+    onFrames: (List<List<OcrLine>>, Bitmap?, List<String>) -> Unit,
+    /** Read the label's barcodes too (Settings → Read label barcodes). */
+    readBarcodes: Boolean = true,
     onError: (String) -> Unit,
 ) {
     val context = LocalContext.current
@@ -119,8 +121,10 @@ fun ScanScreen(
             busy = true
             scope.launch {
                 try {
-                    val lines = OcrEngine.recognize(InputImage.fromFilePath(context, uri))
-                    onFrames(listOf(lines), loadPhoto(context, uri))
+                    val input = InputImage.fromFilePath(context, uri)
+                    val lines = OcrEngine.recognize(input)
+                    val codes = if (readBarcodes) BarcodeEngine.scan(input) else emptyList()
+                    onFrames(listOf(lines), loadPhoto(context, uri), codes)
                 } catch (e: Exception) {
                     onError("Couldn't read photo: ${e.message}")
                 } finally {
@@ -141,14 +145,18 @@ fun ScanScreen(
                 // Read a short burst and let the frames vote on each field, so one slip doesn't stick.
                 val frames = mutableListOf<List<OcrLine>>()
                 var photo: Bitmap? = null
+                val codes = mutableListOf<String>()
                 for (i in 1..BURST_FRAMES) {
                     progress = "Reading $i/$BURST_FRAMES… hold still"
                     // Keep the last photo of the burst for the review screen.
-                    val f = captureAndRead(imageCapture, context, keepPhoto = i == BURST_FRAMES)
+                    val f = captureAndRead(
+                        imageCapture, context, keepPhoto = i == BURST_FRAMES, readBarcodes = readBarcodes,
+                    )
                     frames.add(f.lines)
+                    codes.addAll(f.codes)
                     if (f.photo != null) photo = f.photo
                 }
-                onFrames(frames, photo)
+                onFrames(frames, photo, codes)
             } catch (e: Exception) {
                 onError("Capture failed: ${e.message}")
             } finally {

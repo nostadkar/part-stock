@@ -30,6 +30,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("autoMouserLookup", true)
         set(v) = sp.edit().putBoolean("autoMouserLookup", v).apply()
 
+    /** Also read the label's barcodes on each scan and prefer them over OCR where they disagree. */
+    var readBarcodes: Boolean
+        get() = sp.getBoolean("readBarcodes", true)
+        set(v) = sp.edit().putBoolean("readBarcodes", v).apply()
+
     /** Outcome of the last automatic backup, shown in Settings. */
     var autoBackupStatus: String
         get() = sp.getString("autoBackupStatus", "") ?: ""

@@ -22,6 +22,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import com.partstock.scanner.parse.LabelBarcode
 import com.partstock.scanner.parse.LabelParser
 import com.partstock.scanner.parse.ParsedPart
 import com.partstock.scanner.parse.ScanMerger
@@ -75,8 +76,10 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
             partCount = partCount,
             onInventory = { screen = Screen.Inventory },
             onSettings = { screen = Screen.Settings },
-            onFrames = { frames, photo ->
-                val part = ScanMerger.merge(frames.map { LabelParser.parse(it) })
+            readBarcodes = prefs.readBarcodes,
+            onFrames = { frames, photo, codes ->
+                // Barcodes are read exactly: where one disagrees with OCR, the barcode wins.
+                val part = LabelBarcode.apply(ScanMerger.merge(frames.map { LabelParser.parse(it) }), codes)
                 if (part.rawText.isBlank()) toast("No text found. Move closer and avoid glare.")
                 else screen = Screen.Review(part, photo)
             },
