@@ -91,6 +91,8 @@ public final class LabelParser {
     private static final Pattern MO_COO = Pattern.compile("(?<![A-Z0-9])COO\\s*[:.;]?\\s*([A-Z]{2,})", CI);
     private static final Pattern MO_CUST_PO = Pattern.compile(
             "CUST\\w*\\s*P\\.?\\s*[O0]\\.?\\s*[:.;#]?\\s*([0-9]{4,})", CI);
+    private static final Pattern MO_LINE_ITEM = Pattern.compile(
+            "LINE\\s*ITEM\\s*[:.;#]?\\s*([0-9OoIl]{1,4})(?![0-9])", CI);
     private static final Pattern MO_FIELD_LINE = Pattern.compile(
             "^[^A-Z0-9]*(?:ROHS|QTY|COO|CUST|LINE\\s*ITEM|INVOICE|P\\s*/\\s*N|DESC|WWW)", CI);
     private static final Pattern MOUSER_PN_PREFIX = Pattern.compile("^(\\d{2,3})-(.{3,})$");
@@ -172,6 +174,8 @@ public final class LabelParser {
             p.manufacturer = base.manufacturer;
             p.quantity = base.quantity;
             p.dateCode = base.dateCode;
+            p.purchaseOrder = base.purchaseOrder;
+            p.lineItem = base.lineItem;
             if (base.notes != null) notes.add(base.notes);
         }
         if (kit != null) {
@@ -309,7 +313,10 @@ public final class LabelParser {
         p.customerPn = extract(DK_CREF, lines, Dir.BELOW, none);
         p.dateCode = extract(DK_DATE, lines, Dir.BELOW, none);
         String po = extract(DK_PO, lines, Dir.BELOW, none);
-        if (po != null) p.notes = "PO " + po;
+        if (po != null) {
+            p.notes = "PO " + po;
+            p.purchaseOrder = po.trim();
+        }
     }
 
     private static void parseMouser(List<OcrLine> lines, ParsedPart p) {
@@ -338,7 +345,9 @@ public final class LabelParser {
             if (p.quantity == null && (m = MO_QTY.matcher(t)).find()) p.quantity = toInt(m.group(1));
             if (coo == null && (m = MO_COO.matcher(t)).find()) coo = m.group(1).toUpperCase(Locale.US);
             if (custPo == null && (m = MO_CUST_PO.matcher(t)).find()) custPo = m.group(1);
+            if (p.lineItem == null && (m = MO_LINE_ITEM.matcher(t)).find()) p.lineItem = digits(m.group(1));
         }
+        p.purchaseOrder = custPo;
         // Fallbacks for when OCR splits "Field:" and its value into separate lines.
         Set<OcrLine> none = Collections.emptySet();
         if (p.description == null) p.description = upper(extract(EN_DESC, lines, Dir.RIGHT, none));
@@ -584,6 +593,13 @@ public final class LabelParser {
     /** Common OCR letter/digit confusions inside numbers. */
     static String fixDigits(String s) {
         return s.replace('O', '0').replace('o', '0').replace('I', '1').replace('l', '1').replace('|', '1');
+    }
+
+    /** Digits only, keeping leading zeros ("Line Item: 028" stays "028"). */
+    private static String digits(String s) {
+        if (s == null) return null;
+        String d = fixDigits(s).replaceAll("[^0-9]", "");
+        return d.isEmpty() ? null : d;
     }
 
     static Integer toInt(String s) {

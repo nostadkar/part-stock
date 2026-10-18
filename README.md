@@ -78,8 +78,11 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   file, other parts kept) or *Replace everything* (the scan log is kept); a summary like "42 parts: 30 new, 12 updated"
   is shown before anything changes. *Auto backup* writes the inventory CSV to a folder you pick after every save and
   keeps the newest 5 files; pick a folder your cloud app syncs to keep a copy off the phone.
-- Scanning both the DigiKey and Entrust label of the **same bag** with "Add" double-counts it. Use "Set" or
-  scan one label per bag.
+- **Duplicate-bag guard**: a bag is recognised by Mouser's Cust PO + Line Item, or DigiKey's part number + PO +
+  quantity (+ date code). Scanning a bag that was already saved shows "This bag was already added on Oct 17
+  (qty 10)" and switches to "Set count to this". Labels without those fields (e.g. a kit label alone) behave as before.
+- Scanning both the DigiKey and Entrust label of the **same bag** with "Add" double-counts it (the kit label alone
+  can't be recognised). Use "Set" or scan one label per bag.
 
 ## Project layout
 

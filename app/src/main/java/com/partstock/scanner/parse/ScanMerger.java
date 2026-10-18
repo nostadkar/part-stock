@@ -53,6 +53,8 @@ public final class ScanMerger {
         out.kitQuantity = vote(same, p -> p.kitQuantity, best.kitQuantity);
         out.kitPerBoard = vote(same, p -> p.kitPerBoard, best.kitPerBoard);
         out.dateCode = vote(same, p -> p.dateCode, best.dateCode);
+        out.purchaseOrder = vote(same, p -> p.purchaseOrder, best.purchaseOrder);
+        out.lineItem = vote(same, p -> p.lineItem, best.lineItem);
 
         // The ref des list and its count travel together.
         out.refDes = vote(same, p -> p.refDes, best.refDes);

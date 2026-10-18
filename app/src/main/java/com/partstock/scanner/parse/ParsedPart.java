@@ -29,6 +29,10 @@ public final class ParsedPart {
     public String refDes;
     public int refDesCount;
     public String notes;
+    /** Purchase order printed on a distributor label (Mouser "Cust PO", DigiKey "Purchase Order"). */
+    public String purchaseOrder;
+    /** Mouser only: order line item ("Line Item: 028"). */
+    public String lineItem;
     public String rawText = "";
 
     /** Key the sheet matches on: MPN, else customer PN, else distributor PN. */
@@ -36,6 +40,25 @@ public final class ParsedPart {
         if (notBlank(mpn)) return mpn;
         if (notBlank(customerPn)) return customerPn;
         return notBlank(distributorPn) ? distributorPn : null;
+    }
+
+    /**
+     * Identifies one physical bag, so scanning it twice can be caught: Mouser PO + line item, or DigiKey part number +
+     * PO + quantity (+ date code when printed). Null when the label doesn't show enough to tell bags apart.
+     */
+    public String bagFingerprint() {
+        if (MOUSER.equals(distributor) && notBlank(purchaseOrder) && notBlank(lineItem)) {
+            return "MOUSER|" + squash(purchaseOrder) + "|" + squash(lineItem);
+        }
+        if (DIGIKEY.equals(distributor) && notBlank(distributorPn) && notBlank(purchaseOrder) && quantity != null) {
+            return "DIGIKEY|" + squash(distributorPn) + "|" + squash(purchaseOrder) + "|" + quantity
+                    + (notBlank(dateCode) ? "|" + squash(dateCode) : "");
+        }
+        return null;
+    }
+
+    private static String squash(String s) {
+        return s.toUpperCase(java.util.Locale.US).replaceAll("\\s+", "");
     }
 
     static boolean notBlank(String s) { return s != null && !s.trim().isEmpty(); }

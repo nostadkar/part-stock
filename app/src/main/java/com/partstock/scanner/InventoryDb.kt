@@ -62,13 +62,18 @@ data class ScanEntry(
     val category: String,
     /** Description came from Mouser's listing, so it replaces the one saved from a label. */
     val descriptionFromMouser: Boolean = false,
+    /** Identifies the physical bag (see ParsedPart.bagFingerprint); blank when the label can't. */
+    val bagFingerprint: String = "",
 )
+
+/** An earlier save of the same bag. */
+data class BagHit(val timestamp: String, val quantity: Int, val mode: String)
 
 /** What a CSV restore did (or would do, for a dry run). */
 data class ImportSummary(val rows: Int, val added: Int, val updated: Int, val removed: Int)
 
 /** Inventory stored on the phone: one row per part, plus a log of every save. */
-class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 3) {
+class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 4) {
 
     /** Called after every change to the parts table (used for auto backup). */
     @Volatile var onChanged: (() -> Unit)? = null
@@ -91,8 +96,9 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             """CREATE TABLE scan_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, part_key TEXT, mode TEXT,
                 qty INTEGER, total INTEGER, location TEXT, source TEXT,
-                distributor_pn TEXT, customer_pn TEXT, raw TEXT)"""
+                distributor_pn TEXT, customer_pn TEXT, raw TEXT, bag_fp TEXT NOT NULL DEFAULT '')"""
         )
+        db.execSQL("CREATE INDEX IF NOT EXISTS scan_log_bag_fp ON scan_log(bag_fp)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -109,6 +115,11 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             for ((id, desc, notes) in rows) {
                 db.execSQL("UPDATE parts SET category = ? WHERE id = ?", arrayOf(Categories.classify(desc, notes), id))
             }
+        }
+        if (oldVersion < 4) {
+            // Adds a column and an index only; earlier scans have no fingerprint and never warn.
+            db.execSQL("ALTER TABLE scan_log ADD COLUMN bag_fp TEXT NOT NULL DEFAULT ''")
+            db.execSQL("CREATE INDEX IF NOT EXISTS scan_log_bag_fp ON scan_log(bag_fp)")
         }
     }
 
@@ -185,7 +196,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                 put("mode", if (e.addMode) "add" else "set")
                 put("qty", e.quantity); put("total", total); put("location", e.location)
                 put("source", e.source); put("distributor_pn", e.distributorPn)
-                put("customer_pn", e.customerPn); put("raw", e.raw)
+                put("customer_pn", e.customerPn); put("raw", e.raw); put("bag_fp", e.bagFingerprint)
             })
             db.setTransactionSuccessful()
             return total
@@ -256,6 +267,15 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         }
         if (!dryRun) onChanged?.invoke()
         return ImportSummary(rows.size, added, updated, removed)
+    }
+
+    /** Latest earlier save of the bag with this fingerprint, if any. */
+    fun findBag(fingerprint: String?): BagHit? {
+        if (fingerprint.isNullOrBlank()) return null
+        return readableDatabase.rawQuery(
+            "SELECT ts, qty, mode FROM scan_log WHERE bag_fp = ? AND mode IN ('add', 'set') ORDER BY id DESC LIMIT 1",
+            arrayOf(fingerprint),
+        ).use { c -> if (c.moveToFirst()) BagHit(c.getString(0).orEmpty(), c.getInt(1), c.getString(2).orEmpty()) else null }
     }
 
     fun all(): List<PartRow> =

@@ -257,6 +257,49 @@ public class LabelParserTest {
     }
 
     @Test
+    public void mouserPoAndLineItemFingerprintTheBag() {
+        ParsedPart p = LabelParser.parse(multiLabelBag());
+        assertEquals("10491550", p.purchaseOrder);
+        assertEquals("028", p.lineItem);
+        assertEquals("MOUSER|10491550|028", p.bagFingerprint());
+
+        ParsedPart q = LabelParser.parse(mouser());
+        assertEquals("10482291", q.purchaseOrder);
+        assertEquals("010", q.lineItem);
+        assertEquals("MOUSER|10482291|010", q.bagFingerprint());
+    }
+
+    @Test
+    public void lineItemReadWithLookAlikeDigits() {
+        List<OcrLine> l = new Lines()
+                .add("MOUSER ELECTRONICS", 390, 625, 555, 680)
+                .add("Cust PO: 10491550", 220, 652, 455, 675)
+                .add("Line Item: O28", 220, 727, 415, 750)
+                .add("P/N: 798-DF11-12DP-2DS24", 275, 922, 690, 955)
+                .list;
+        assertEquals("028", LabelParser.parse(l).lineItem);
+    }
+
+    @Test
+    public void digiKeyFingerprintUsesPnPoQtyAndDateCode() {
+        ParsedPart p = LabelParser.parse(digiKey());
+        assertEquals("10459898 533455-002", p.purchaseOrder);
+        assertNull(p.lineItem);
+        assertEquals("DIGIKEY|2SK3019-TPMSCT-ND|10459898533455-002|500|2327", p.bagFingerprint());
+    }
+
+    @Test
+    public void noFingerprintWithoutEnoughFields() {
+        List<OcrLine> l = new Lines()
+                .add("MOUSER ELECTRONICS", 390, 625, 555, 680)
+                .add("P/N: 798-DF11-12DP-2DS24", 275, 922, 690, 955)
+                .add("QTY: 10", 262, 1245, 375, 1275)
+                .list;
+        assertNull(LabelParser.parse(l).bagFingerprint()); // no PO / line item
+        assertNull(LabelParser.parse(entrust()).bagFingerprint()); // kit label alone
+    }
+
+    @Test
     public void myDataStickerAlone() {
         List<OcrLine> l = new Lines()
                 .add("Carrier: 053716", 697, 520, 900, 550)

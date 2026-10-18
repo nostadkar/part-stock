@@ -85,6 +85,8 @@ fun ReviewScreen(
     val mouserKey = remember { secrets.getMouserKey() }
 
     var existing by remember { mutableStateOf<Match?>(null) }
+    val fingerprint = remember { part.bagFingerprint() }
+    var seenBag by remember { mutableStateOf<BagHit?>(null) }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var showRaw by remember { mutableStateOf(false) }
@@ -92,6 +94,11 @@ fun ReviewScreen(
     // Check whether this part is already in stock; re-checks as the part numbers are edited.
     LaunchedEffect(mpn, customerPn, distributorPn) {
         existing = withContext(Dispatchers.IO) { db.find(mpn.trim(), customerPn.trim(), distributorPn.trim()) }
+    }
+    // Same bag saved before? Then a second "Add" would double-count it, so default to "Set".
+    LaunchedEffect(fingerprint) {
+        seenBag = withContext(Dispatchers.IO) { db.findBag(fingerprint) }
+        if (seenBag != null) addMode = false
     }
     val hasKey = mpn.isNotBlank() || customerPn.isNotBlank() || distributorPn.isNotBlank()
     val link: String? = apiUrl ?: Links.productUrl(part.distributor, distributorPn, mpn)
@@ -186,6 +193,7 @@ fun ReviewScreen(
                     raw = part.rawText.take(1500),
                     unitCost = cost, productUrl = link.orEmpty(),
                     category = category, descriptionFromMouser = descriptionFromMouser,
+                    bagFingerprint = fingerprint.orEmpty(),
                 )
                 val name = mpn.ifBlank { customerPn.ifBlank { distributorPn } }
                 try {
@@ -228,6 +236,7 @@ fun ReviewScreen(
                 if (part.refDesCount > 0) AssistChip(onClick = {}, label = { Text("${part.refDesCount} ref des") })
             }
 
+            seenBag?.let { DuplicateBagCard(it) }
             StockBanner(existing, hasKey, qty.trim().toIntOrNull(), addMode)
 
             Field("Manufacturer part number", mpn, { mpn = it }, mono = true,
@@ -323,6 +332,32 @@ fun ReviewScreen(
                 Text(part.rawText, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
             }
             Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun DuplicateBagCard(hit: BagHit) {
+    val day = try {
+        java.time.LocalDateTime.parse(hit.timestamp.replace(' ', 'T'))
+            .format(java.time.format.DateTimeFormatter.ofPattern("MMM d", java.util.Locale.US))
+    } catch (_: Exception) {
+        hit.timestamp
+    }
+    val how = if (hit.mode == "set") "counted" else "added"
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+        Column(Modifier.padding(12.dp).fillMaxWidth()) {
+            Text(
+                "This bag was already $how on $day (qty ${hit.quantity})",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
+            Text(
+                "Same order details on the label. Switched to \"Set count to this\" so it isn't counted twice; " +
+                    "pick \"Add to stock\" if it really is another bag.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
         }
     }
 }
