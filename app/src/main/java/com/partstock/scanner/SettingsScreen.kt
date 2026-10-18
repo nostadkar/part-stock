@@ -54,6 +54,10 @@ fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: 
     var key by remember { mutableStateOf("") }
     var saved by remember { mutableStateOf(secrets.hasMouserKey()) }
     var status by remember { mutableStateOf<String?>(null) }
+    var dkId by remember { mutableStateOf("") }
+    var dkSecret by remember { mutableStateOf("") }
+    var dkSaved by remember { mutableStateOf(secrets.hasDigiKey()) }
+    var dkStatus by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var checking by remember { mutableStateOf(false) }
@@ -194,6 +198,59 @@ fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: 
                 }
             }
             status?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            Text("DigiKey API (Client ID and Secret)", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Turns on \"Look up on DigiKey\" for DigiKey labels: price, link, description and category. " +
+                    "Create an app with the Product Information API at developer.digikey.com and paste its " +
+                    "Client ID and Client Secret here. Both are stored encrypted on this phone like the Mouser key, " +
+                    "left out of backups and never shown in exports.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                if (dkSaved) "DigiKey credentials are saved on this phone." else "No DigiKey credentials saved yet.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = dkId,
+                onValueChange = { dkId = it.trim() },
+                label = { Text(if (dkSaved) "Replace Client ID" else "Client ID") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = dkSecret,
+                onValueChange = { dkSecret = it.trim() },
+                label = { Text(if (dkSaved) "Replace Client Secret" else "Client Secret") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(
+                    enabled = dkId.isNotBlank() && dkSecret.isNotBlank(),
+                    onClick = {
+                        secrets.setDigiKey(dkId, dkSecret)
+                        dkId = ""
+                        dkSecret = ""
+                        dkSaved = secrets.hasDigiKey()
+                        dkStatus = "DigiKey credentials saved"
+                    },
+                ) { Text("Save") }
+                if (dkSaved) {
+                    OutlinedButton(onClick = {
+                        secrets.setDigiKey(null, null)
+                        dkSaved = false
+                        dkStatus = "DigiKey credentials removed"
+                    }) { Text("Remove") }
+                }
+            }
+            dkStatus?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             Text("Backup & restore", style = MaterialTheme.typography.titleMedium)

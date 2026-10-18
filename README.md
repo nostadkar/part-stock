@@ -51,7 +51,13 @@ To build locally instead: open the folder in Android Studio and press Run. Min A
 - **Settings → Mouser Search API key** turns on "Look up price on Mouser" in the review screen, which fills in the
   price (at your bag quantity), the official product link, and corrects an OCR slip in the part number.
 
-**The API key is never in this repository or in the APK.** You paste it into the app once. It is encrypted
+- **Settings → DigiKey API** (Client ID and Client Secret of an app you create at developer.digikey.com with the
+  Product Information API v4) turns on "Look up on DigiKey" for DigiKey labels: price at your bag quantity (from the
+  packaging on the label, e.g. Cut Tape), DigiKey's description, manufacturer, MPN, product page and category. It
+  tries the DigiKey part number, then the MPN, accepting the nearest result within 2 characters and look-alike swaps,
+  like the Mouser lookup. The sign-in token is kept in memory only, until it expires.
+
+**The API keys are never in this repository or in the APK.** You paste it into the app once. It is encrypted
 with an Android Keystore key that can't be exported, only the encrypted text is stored, that file is excluded
 from backups, and the key never appears in exports or logs. Lookups go directly from the phone to Mouser over HTTPS.
 Don't put keys in source files, GitHub secrets baked into the build, or `BuildConfig`: the repo is public and an

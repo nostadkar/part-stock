@@ -74,6 +74,7 @@ fun ReviewScreen(
     var notes by remember { mutableStateOf(part.notes.orEmpty()) }
     var category by remember { mutableStateOf(Categories.classify(part.description, part.notes)) }
     var categoryPicked by remember { mutableStateOf(false) } // the user chose one; lookups leave it alone
+    // Set by a Mouser or DigiKey lookup: the distributor's description replaces the one saved from a label.
     var descriptionFromMouser by remember { mutableStateOf(false) }
     var addMode by remember { mutableStateOf(true) }
     var unitCost by remember { mutableStateOf("") }
@@ -83,6 +84,8 @@ fun ReviewScreen(
     var lookupMsg by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val mouserKey = remember { secrets.getMouserKey() }
+    val digiKey = remember { secrets.getDigiKey() }
+    val isDigiKeyLabel = part.distributor == ParsedPart.DIGIKEY
 
     var existing by remember { mutableStateOf<Match?>(null) }
     val fingerprint = remember { part.bagFingerprint() }
@@ -167,6 +170,83 @@ fun ReviewScreen(
                 lookupMsg = e.message
             } catch (e: Exception) {
                 lookupMsg = "Lookup failed: " + (e.message ?: e.javaClass.simpleName).replace(key, "***")
+            } finally {
+                looking = false
+            }
+        }
+    }
+
+    fun lookupDigiKey() {
+        val (id, secret) = digiKey ?: return
+        val dpn = distributorPn.trim()
+        val m = mpn.trim()
+        if (dpn.isBlank() && m.isBlank()) {
+            lookupMsg = "Enter a part number first."
+            return
+        }
+        val q = qty.trim().toIntOrNull() ?: 1
+        scope.launch {
+            looking = true
+            lookupMsg = null
+            try {
+                var found: DigiKeyPart? = null
+                var tried = ""
+                // DigiKey PN first, then the MPN. Each: exact, then nearest within 2 characters in a keyword search,
+                // then the start of the number (misreads near the end are common), then look-alike swaps.
+                for (pn in listOf(dpn, m).filter { it.isNotBlank() }.distinct()) {
+                    tried = pn
+                    found = DigiKeyApi.details(id, secret, pn, q)
+                        ?: DigiKeyApi.search(id, secret, pn, q, maxDistance = 2)
+                    if (found == null) {
+                        val stem = if (pn.uppercase().endsWith("-ND")) pn.dropLast(3).dropLast(3) else pn.dropLast(3)
+                        if (stem.length >= 6) found = DigiKeyApi.search(id, secret, stem, q, wanted = pn, maxDistance = 2)
+                    }
+                    if (found == null) {
+                        for (v in PartNumberVariants.confusions(pn, 8)) {
+                            found = DigiKeyApi.details(id, secret, v, q) ?: continue
+                            break
+                        }
+                    }
+                    if (found != null) break
+                }
+                val r = found
+                if (r == null) {
+                    lookupMsg = "DigiKey has no match for $tried. Check the number against the label and try again."
+                } else {
+                    val fixed = ArrayList<String>()
+                    if (r.unitPrice != null) unitCost = InventoryDb.fmtCost(r.unitPrice)
+                    if (r.url.isNotBlank()) apiUrl = r.url
+                    if (isDigiKeyLabel && r.digiKeyPn.isNotBlank() && dpn.isNotBlank() &&
+                        PartNumberVariants.distance(r.digiKeyPn, dpn) in 1..2
+                    ) {
+                        fixed.add("$dpn → ${r.digiKeyPn}")
+                        distributorPn = r.digiKeyPn
+                    } else if (isDigiKeyLabel && dpn.isBlank() && r.digiKeyPn.isNotBlank()) {
+                        distributorPn = r.digiKeyPn
+                    }
+                    if (r.description.isNotBlank()) {
+                        description = r.description
+                        descriptionFromMouser = true
+                    }
+                    if (!categoryPicked) {
+                        category = Categories.classify(*(r.categories + listOf(r.description, description)).toTypedArray())
+                    }
+                    if (r.manufacturer.isNotBlank()) manufacturer = r.manufacturer
+                    if (r.mpn.isNotBlank() && r.mpn != m) {
+                        if (m.isNotBlank()) fixed.add("$m → ${r.mpn}")
+                        mpn = r.mpn
+                    }
+                    val base = if (r.unitPrice != null) {
+                        "DigiKey: ${r.currency} ${InventoryDb.fmtCost(r.unitPrice)} each at ${r.priceAtQty}+"
+                    } else {
+                        "Found on DigiKey, but no price listed."
+                    }
+                    lookupMsg = if (fixed.isNotEmpty()) "$base. Corrected: ${fixed.joinToString(", ")}" else base
+                }
+            } catch (e: DigiKeyException) {
+                lookupMsg = e.message
+            } catch (e: Exception) {
+                lookupMsg = "Lookup failed: " + (e.message ?: e.javaClass.simpleName).replace(secret, "***")
             } finally {
                 looking = false
             }
@@ -289,11 +369,22 @@ fun ReviewScreen(
                 },
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (isDigiKeyLabel && digiKey != null) {
+                OutlinedButton(onClick = ::lookupDigiKey, enabled = !looking, modifier = Modifier.fillMaxWidth()) {
+                    if (looking) CircularProgressIndicator(Modifier.size(18.dp)) else Text("Look up on DigiKey")
+                }
+            } else if (isDigiKeyLabel && mouserKey == null) {
+                Text(
+                    "Add DigiKey API credentials in Settings to fill in the price automatically.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             if (mouserKey != null) {
                 OutlinedButton(onClick = ::lookupMouser, enabled = !looking, modifier = Modifier.fillMaxWidth()) {
                     if (looking) CircularProgressIndicator(Modifier.size(18.dp)) else Text("Look up price on Mouser")
                 }
-            } else {
+            } else if (!isDigiKeyLabel) {
                 Text(
                     "Add a Mouser API key in Settings to fill in the price automatically.",
                     style = MaterialTheme.typography.bodySmall,
