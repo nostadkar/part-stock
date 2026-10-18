@@ -3,6 +3,7 @@ package com.partstock.scanner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.partstock.scanner.parse.PartNumberVariants
+import com.partstock.scanner.parse.PriceRefresh
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -23,7 +24,13 @@ data class MouserPart(
 )
 
 /** A problem Mouser reported (bad key, rate limit). The message is safe to show: it never contains the key. */
-class MouserException(message: String) : Exception(message)
+class MouserException(
+    message: String,
+    /** Too many requests: stop and try again later. */
+    val rateLimited: Boolean = false,
+    /** The key was rejected. */
+    val badKey: Boolean = false,
+) : Exception(message)
 
 /** Mouser Search API v1, part number search. Called straight from the phone with the user's own key. */
 object MouserApi {
@@ -57,8 +64,9 @@ object MouserApi {
             val stream = if (code in 200..299) conn.inputStream else conn.errorStream
             val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
             when {
-                code == 401 || code == 403 -> throw MouserException("Mouser rejected the API key. Check it in Settings.")
-                code == 429 -> throw MouserException("Mouser rate limit reached. Try again in a minute.")
+                code == 401 || code == 403 ->
+                    throw MouserException("Mouser rejected the API key. Check it in Settings.", badKey = true)
+                code == 429 -> throw MouserException("Mouser rate limit reached. Try again in a minute.", rateLimited = true)
                 code !in 200..299 -> throw MouserException("Mouser error (HTTP $code).")
             }
             parse(text, wanted, qty, maxDistance)
@@ -72,7 +80,7 @@ object MouserApi {
         val errors = json.optJSONArray("Errors")
         if (errors != null && errors.length() > 0) {
             val msg = errors.getJSONObject(0).optString("Message", "")
-            throw MouserException(msg.ifBlank { "Mouser returned an error." })
+            throw MouserException(msg.ifBlank { "Mouser returned an error." }, rateLimited = PriceRefresh.isRateLimit(200, msg))
         }
         val parts = json.optJSONObject("SearchResults")?.optJSONArray("Parts") ?: return null
         if (parts.length() == 0) return null

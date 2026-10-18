@@ -51,6 +51,12 @@ To build locally instead: open the folder in Android Studio and press Run. Min A
 - **Settings → Mouser Search API key** turns on "Look up price on Mouser" in the review screen, which fills in the
   price (at your bag quantity), the official product link, and corrects an OCR slip in the part number.
 
+- **Refresh prices** (circular-arrow icon on the Inventory screen) looks up every part with a Mouser part number and
+  updates its unit cost, description, link and category, then shows e.g. "Updated 38, not found 2". It sends one request
+  every 2.2 s to stay under Mouser's limit of about 30 a minute (so 100 parts take about 4 minutes; keep the screen
+  open) and stops cleanly on a rate-limit or key error, keeping what was already updated. A category you picked by hand
+  (in the review screen or the edit dialog) is remembered and never overwritten by a lookup or refresh.
+  The edit dialog shows where and when the price came from ("Price from Mouser, Oct 18").
 - **Settings → DigiKey API** (Client ID and Client Secret of an app you create at developer.digikey.com with the
   Product Information API v4) turns on "Look up on DigiKey" for DigiKey labels: price at your bag quantity (from the
   packaging on the label, e.g. Cut Tape), DigiKey's description, manufacturer, MPN, product page and category. It

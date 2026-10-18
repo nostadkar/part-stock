@@ -22,11 +22,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -44,6 +46,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,11 +55,19 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.partstock.scanner.parse.Categories
 import com.partstock.scanner.parse.Links
+import com.partstock.scanner.parse.PriceRefresh
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.time.LocalDate
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
+fun InventoryScreen(db: InventoryDb, secrets: SecretStore, onBack: () -> Unit) {
     val context = LocalContext.current
     var version by remember { mutableIntStateOf(0) } // bump to reload after edits
     val parts = remember(version) { db.all() }
@@ -67,6 +78,7 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
     var bucket by remember { mutableStateOf<String?>(null) } // null = all categories
     var buildingKit by remember { mutableStateOf(false) }
     var lowOnly by remember { mutableStateOf(false) }
+    var refreshing by remember { mutableStateOf(false) }
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
 
@@ -108,6 +120,9 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
                 },
                 actions = {
+                    IconButton(onClick = { refreshing = true }) {
+                        Icon(Icons.Filled.Refresh, contentDescription = "Refresh prices")
+                    }
                     IconButton(onClick = { buildingKit = true }) { Icon(Icons.Filled.Build, contentDescription = "Build kit") }
                     IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.Share, contentDescription = "Export") }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
@@ -277,6 +292,17 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
         )
     }
 
+    if (refreshing) {
+        RefreshPricesDialog(
+            db = db,
+            secrets = secrets,
+            onClose = { changed ->
+                refreshing = false
+                if (changed) version++
+            },
+        )
+    }
+
     if (buildingKit) {
         BuildKitDialog(
             db = db,
@@ -288,6 +314,114 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
             },
         )
     }
+}
+
+/**
+ * Looks up every part with a Mouser part number, one request every couple of seconds (Mouser allows about 30 a
+ * minute), and updates price, description, link and category (unless picked by hand). Stops on a rate-limit or key
+ * error; parts done so far stay updated.
+ */
+@Composable
+private fun RefreshPricesDialog(db: InventoryDb, secrets: SecretStore, onClose: (Boolean) -> Unit) {
+    val scope = rememberCoroutineScope()
+    val key = remember { secrets.getMouserKey() }
+    val targets = remember { db.all().filter { PriceRefresh.hasMouserPn(it.distributor, it.distributorPn, it.productUrl) } }
+    var job by remember { mutableStateOf<Job?>(null) }
+    var done by remember { mutableIntStateOf(0) }
+    var updated by remember { mutableIntStateOf(0) }
+    var notFound by remember { mutableIntStateOf(0) }
+    var failed by remember { mutableIntStateOf(0) }
+    var result by remember { mutableStateOf<String?>(null) }
+    val running = job != null && result == null
+
+    fun start(k: String) {
+        job = scope.launch {
+            var stopped: String? = null
+            for ((i, p) in targets.withIndex()) {
+                if (i > 0) delay(PriceRefresh.MOUSER_PACE_MS)
+                try {
+                    val r = MouserApi.lookup(k, p.distributorPn.trim(), maxOf(1, p.quantity))
+                    if (r == null) {
+                        notFound++
+                    } else {
+                        val cat = Categories.classify(r.category, r.description, p.description)
+                        withContext(Dispatchers.IO) {
+                            db.applyLookup(
+                                p.id,
+                                LookupUpdate(r.unitPrice, r.description, cat, r.url, "Mouser"),
+                            )
+                        }
+                        updated++
+                    }
+                } catch (e: MouserException) {
+                    if (e.rateLimited || e.badKey) {
+                        stopped = e.message ?: "Mouser error"
+                        break
+                    }
+                    failed++
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    failed++
+                }
+                done = i + 1
+            }
+            if (updated > 0) withContext(Dispatchers.IO) { db.notifyChanged() }
+            result = PriceRefresh.summary(updated, notFound, failed, stopped, targets.size - done)
+        }
+    }
+
+    fun stop() {
+        job?.cancel()
+        if (updated > 0) db.notifyChanged()
+        result = PriceRefresh.summary(updated, notFound, failed, "you stopped it", targets.size - done)
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!running) onClose(updated > 0) },
+        title = { Text("Refresh prices") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                when {
+                    key == null -> Text("Add a Mouser API key in Settings first.")
+                    targets.isEmpty() -> Text("No parts have a Mouser part number.")
+                    result != null -> Text(result.orEmpty())
+                    running -> {
+                        Text("Checking ${done + 1} of ${targets.size}…")
+                        LinearProgressIndicator(
+                            progress = { done.toFloat() / targets.size },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            "Updated $updated so far. One request every ${PriceRefresh.MOUSER_PACE_MS / 1000.0} s " +
+                                "to stay under Mouser's limit.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    else -> {
+                        val secs = targets.size * PriceRefresh.MOUSER_PACE_MS / 1000
+                        Text(
+                            "Looks up ${targets.size} part${if (targets.size == 1) "" else "s"} with a Mouser part number " +
+                                "and updates unit cost, description and category (categories you picked stay). " +
+                                "Takes about ${if (secs < 90) "$secs seconds" else "${(secs + 59) / 60} minutes"}; " +
+                                "keep this screen open.",
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            when {
+                key != null && targets.isNotEmpty() && job == null ->
+                    TextButton(onClick = { start(key) }) { Text("Start") }
+                running -> TextButton(onClick = ::stop) { Text("Stop") }
+                else -> TextButton(onClick = { onClose(updated > 0) }) { Text("Close") }
+            }
+        },
+        dismissButton = {
+            if (job == null) TextButton(onClick = { onClose(false) }) { Text("Cancel") }
+        },
+    )
 }
 
 /** Pick a kit, enter how many boards, check the list, then subtract everything at once. */
@@ -414,6 +548,9 @@ private fun EditDialog(
     var confirmUse by remember { mutableStateOf(false) }
     val link = part.link()
     val stock = qty.toIntOrNull() ?: part.quantity
+    // "Price from Mouser, Oct 18", shown while the cost is the one that lookup saved.
+    val priceLabel = remember { PriceRefresh.label(part.priceSource, part.priceCheckedAt, LocalDate.now()) }
+    val savedCost = remember { part.unitCost?.let { InventoryDb.fmtCost(it) }.orEmpty() }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -472,6 +609,9 @@ private fun EditDialog(
                     cost, { v -> cost = v.filter { it.isDigit() || it == '.' } }, label = { Text("Unit cost (each)") },
                     singleLine = true, prefix = { Text("$") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    supportingText = if (priceLabel.isNotBlank() && cost == savedCost) {
+                        { Text(priceLabel) }
+                    } else null,
                 )
                 OutlinedTextField(location, { location = it }, label = { Text("Bin / location") }, singleLine = true)
                 if (part.notes.isNotBlank()) Text("Notes: ${part.notes}", style = MaterialTheme.typography.bodySmall)

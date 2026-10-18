@@ -113,7 +113,7 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
                 partCount = db.all().size
                 screen = Screen.Scan
             }
-            InventoryScreen(db = db, onBack = {
+            InventoryScreen(db = db, secrets = secrets, onBack = {
                 partCount = db.all().size
                 screen = Screen.Scan
             })

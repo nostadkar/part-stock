@@ -78,6 +78,7 @@ fun ReviewScreen(
     var descriptionFromMouser by remember { mutableStateOf(false) }
     var addMode by remember { mutableStateOf(true) }
     var unitCost by remember { mutableStateOf("") }
+    var priceSource by remember { mutableStateOf("") } // "Mouser" / "DigiKey" when a lookup filled the price
     // Product page returned by Mouser's lookup; otherwise a link is built from the part numbers.
     var apiUrl by remember { mutableStateOf<String?>(null) }
     var looking by remember { mutableStateOf(false) }
@@ -111,7 +112,14 @@ fun ReviewScreen(
         val known = existing?.row?.unitCost
         if (known != null && unitCost.isBlank()) unitCost = InventoryDb.fmtCost(known)
         val savedCat = existing?.row?.category
-        if (savedCat != null && savedCat != Categories.OTHER && !categoryPicked && !descriptionFromMouser) category = savedCat
+        val savedRow = existing?.row
+        if (savedRow != null && savedRow.categoryPicked && !categoryPicked) {
+            // Picked by hand on an earlier save: keep it, and keep lookups from changing it.
+            category = savedRow.category
+            categoryPicked = true
+        } else if (savedCat != null && savedCat != Categories.OTHER && !categoryPicked && !descriptionFromMouser) {
+            category = savedCat
+        }
     }
 
     fun lookupMouser() {
@@ -148,7 +156,10 @@ fun ReviewScreen(
                 if (r == null) {
                     lookupMsg = "Mouser has no match for $pn. Check the number against the label and try again."
                 } else {
-                    if (r.unitPrice != null) unitCost = InventoryDb.fmtCost(r.unitPrice)
+                    if (r.unitPrice != null) {
+                        unitCost = InventoryDb.fmtCost(r.unitPrice)
+                        priceSource = "Mouser"
+                    }
                     if (r.url.isNotBlank()) apiUrl = r.url
                     if (part.distributor == ParsedPart.MOUSER && r.mouserPn.isNotBlank()) distributorPn = r.mouserPn
                     if (r.description.isNotBlank()) {
@@ -214,7 +225,10 @@ fun ReviewScreen(
                     lookupMsg = "DigiKey has no match for $tried. Check the number against the label and try again."
                 } else {
                     val fixed = ArrayList<String>()
-                    if (r.unitPrice != null) unitCost = InventoryDb.fmtCost(r.unitPrice)
+                    if (r.unitPrice != null) {
+                        unitCost = InventoryDb.fmtCost(r.unitPrice)
+                        priceSource = "DigiKey"
+                    }
                     if (r.url.isNotBlank()) apiUrl = r.url
                     if (isDigiKeyLabel && r.digiKeyPn.isNotBlank() && dpn.isNotBlank() &&
                         PartNumberVariants.distance(r.digiKeyPn, dpn) in 1..2
@@ -272,6 +286,7 @@ fun ReviewScreen(
                     dateCode = part.dateCode.orEmpty(), refDes = part.refDes.orEmpty(),
                     raw = part.rawText.take(1500),
                     unitCost = cost, productUrl = link.orEmpty(),
+                    categoryPicked = categoryPicked, priceSource = if (cost != null) priceSource else "",
                     category = category, descriptionFromMouser = descriptionFromMouser,
                     bagFingerprint = fingerprint.orEmpty(),
                     kitName = part.kitName.orEmpty(), kitPerBoard = part.kitPerBoard,
@@ -358,7 +373,10 @@ fun ReviewScreen(
 
             OutlinedTextField(
                 value = unitCost,
-                onValueChange = { v -> unitCost = v.filter { it.isDigit() || it == '.' } },
+                onValueChange = { v ->
+                    unitCost = v.filter { it.isDigit() || it == '.' }
+                    priceSource = ""
+                },
                 label = { Text("Unit cost (each)") },
                 singleLine = true,
                 prefix = { Text("$") },

@@ -36,6 +36,11 @@ data class PartRow(
     val category: String,
     /** Low-stock minimum; null = not tracked. */
     val minQty: Int? = null,
+    /** The user chose the category, so lookups and price refreshes leave it alone. */
+    val categoryPicked: Boolean = false,
+    /** Where the unit cost came from ("Mouser", "DigiKey") and when; blank for a typed or imported price. */
+    val priceSource: String = "",
+    val priceCheckedAt: String = "",
 )
 
 /** At or below its minimum (the Inventory screen's "Low stock" filter). */
@@ -68,6 +73,10 @@ data class ScanEntry(
     val category: String,
     /** Description came from Mouser's listing, so it replaces the one saved from a label. */
     val descriptionFromMouser: Boolean = false,
+    /** The user picked [category] by hand. */
+    val categoryPicked: Boolean = false,
+    /** [unitCost] came from this distributor's lookup just now ("Mouser", "DigiKey"); blank otherwise. */
+    val priceSource: String = "",
     /** Identifies the physical bag (see ParsedPart.bagFingerprint); blank when the label can't. */
     val bagFingerprint: String = "",
     /** Entrust kit label on the bag: kit header, per-board qty and ref des, stored as kit membership. */
@@ -88,11 +97,21 @@ data class KitLine(val part: PartRow, val perBoard: Int, val refDes: String, val
 /** An earlier save of the same bag. */
 data class BagHit(val timestamp: String, val quantity: Int, val mode: String)
 
+/** One part's result from a distributor lookup, applied by [InventoryDb.applyLookup]. */
+data class LookupUpdate(
+    val unitCost: Double?,
+    val description: String,
+    /** Bucket worked out from the distributor's category; ignored when the user picked one. */
+    val category: String,
+    val productUrl: String,
+    val source: String,
+)
+
 /** What a CSV restore did (or would do, for a dry run). */
 data class ImportSummary(val rows: Int, val added: Int, val updated: Int, val removed: Int)
 
 /** Inventory stored on the phone: one row per part, plus a log of every save. */
-class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 6) {
+class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 7) {
 
     /** Called after every change to the parts table (used for auto backup). */
     @Volatile var onChanged: (() -> Unit)? = null
@@ -109,7 +128,9 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                 date_code TEXT NOT NULL DEFAULT '', ref_des TEXT NOT NULL DEFAULT '',
                 scans INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT '',
                 unit_cost REAL, product_url TEXT NOT NULL DEFAULT '',
-                category TEXT NOT NULL DEFAULT '', min_qty INTEGER)"""
+                category TEXT NOT NULL DEFAULT '', min_qty INTEGER,
+                category_picked INTEGER NOT NULL DEFAULT 0, price_source TEXT NOT NULL DEFAULT '',
+                price_checked_at TEXT NOT NULL DEFAULT '')"""
         )
         db.execSQL(
             """CREATE TABLE scan_log (
@@ -158,6 +179,12 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             // Adds a nullable column only; existing parts have no minimum until one is set.
             db.execSQL("ALTER TABLE parts ADD COLUMN min_qty INTEGER")
         }
+        if (oldVersion < 7) {
+            // Adds columns only. Existing categories count as not picked; existing prices have no source date.
+            db.execSQL("ALTER TABLE parts ADD COLUMN category_picked INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE parts ADD COLUMN price_source TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE parts ADD COLUMN price_checked_at TEXT NOT NULL DEFAULT ''")
+        }
     }
 
     /** Matches on MPN, then customer PN, then distributor PN, ignoring case and spaces. */
@@ -199,7 +226,9 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                     fill("mpn", r.mpn, e.mpn)
                     if (e.descriptionFromMouser && e.description.isNotBlank()) put("description", e.description)
                     else fill("description", r.description, e.description)
-                    if (e.category.isNotBlank()) put("category", e.category)
+                    // A category the user picked earlier stays unless they pick another one now.
+                    if (e.category.isNotBlank() && (e.categoryPicked || !r.categoryPicked)) put("category", e.category)
+                    if (e.categoryPicked) put("category_picked", 1)
                     fill("manufacturer", r.manufacturer, e.manufacturer)
                     fill("distributor", r.distributor, e.distributor)
                     fill("distributor_pn", r.distributorPn, e.distributorPn)
@@ -209,6 +238,11 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                     if (e.location.isNotBlank()) put("location", e.location)
                     // Newest price and link win: they come from the latest lookup or an edit.
                     if (e.unitCost != null) put("unit_cost", e.unitCost)
+                    if (e.unitCost != null && e.priceSource.isNotBlank()) {
+                        put("price_source", e.priceSource); put("price_checked_at", now)
+                    } else if (e.unitCost != null && e.unitCost != r.unitCost) {
+                        put("price_source", ""); put("price_checked_at", "") // typed in: no longer from a lookup
+                    }
                     if (e.productUrl.isNotBlank()) put("product_url", e.productUrl)
                     put("source", appendUnique(r.source, e.source))
                     put("notes", appendUnique(r.notes, e.notes))
@@ -226,7 +260,11 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                     put("source", e.source); put("notes", e.notes); put("date_code", e.dateCode)
                     put("ref_des", e.refDes); put("scans", 1); put("updated_at", now)
                     put("product_url", e.productUrl); put("category", e.category)
+                    if (e.categoryPicked) put("category_picked", 1)
                     if (e.unitCost != null) put("unit_cost", e.unitCost)
+                    if (e.unitCost != null && e.priceSource.isNotBlank()) {
+                        put("price_source", e.priceSource); put("price_checked_at", now)
+                    }
                 })
             }
             db.insert("scan_log", null, ContentValues().apply {
@@ -336,13 +374,48 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         id: Long, quantity: Int, location: String, description: String, unitCost: Double?, category: String,
         minQty: Int?,
     ) {
+        val old = byId(id)
         val v = ContentValues().apply {
             put("quantity", quantity); put("location", location.trim()); put("category", category)
             put("description", description.trim()); put("updated_at", now())
         }
+        // Changing the category by hand marks it as picked, so price refreshes don't move it again.
+        if (old != null && category != old.category) v.put("category_picked", 1)
         if (unitCost != null) v.put("unit_cost", unitCost) else v.putNull("unit_cost")
+        if (old != null && unitCost != old.unitCost) {
+            v.put("price_source", ""); v.put("price_checked_at", "")
+        }
         if (minQty != null && minQty > 0) v.put("min_qty", minQty) else v.putNull("min_qty")
         writableDatabase.update("parts", v, "id = ?", arrayOf(id.toString()))
+        onChanged?.invoke()
+    }
+
+    private fun byId(id: Long): PartRow? =
+        readableDatabase.rawQuery("SELECT * FROM parts WHERE id = ?", arrayOf(id.toString())).use { c ->
+            if (c.moveToFirst()) c.toRow() else null
+        }
+
+    /**
+     * Applies a distributor lookup to a saved part: price (with source and date), description, link, and the
+     * category unless the user picked it. Doesn't fire [onChanged]; the caller does once after a batch.
+     */
+    fun applyLookup(id: Long, u: LookupUpdate) {
+        val old = byId(id) ?: return
+        val now = now()
+        val v = ContentValues().apply {
+            if (u.unitCost != null) {
+                put("unit_cost", u.unitCost); put("price_source", u.source); put("price_checked_at", now)
+            }
+            if (u.description.isNotBlank()) put("description", u.description.trim())
+            if (u.productUrl.isNotBlank()) put("product_url", u.productUrl)
+            if (!old.categoryPicked && u.category.isNotBlank()) put("category", u.category)
+            put("updated_at", now)
+        }
+        writableDatabase.update("parts", v, "id = ?", arrayOf(id.toString()))
+    }
+
+    /** Tells listeners (auto backup) that parts changed, e.g. after a batch of [applyLookup] calls. */
+    fun notifyChanged() {
         onChanged?.invoke()
     }
 
@@ -493,6 +566,9 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             productUrl = str("product_url"),
             category = str("category").ifBlank { Categories.OTHER },
             minQty = if (isNull(minIdx)) null else getInt(minIdx).takeIf { it > 0 },
+            categoryPicked = int("category_picked") != 0,
+            priceSource = str("price_source"),
+            priceCheckedAt = str("price_checked_at"),
         )
     }
 
