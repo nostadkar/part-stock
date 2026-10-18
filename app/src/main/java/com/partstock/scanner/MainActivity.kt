@@ -45,7 +45,9 @@ private sealed interface Screen {
     data object Scan : Screen
     /** [photo] is one of the photos that was read, shown on the review screen to compare against. */
     data class Review(val part: ParsedPart, val photo: Bitmap? = null) : Screen
-    data object Inventory : Screen
+    /** [bin] = show only the parts in that bin (opened from the Locations screen). */
+    data class Inventory(val bin: String? = null) : Screen
+    data object Locations : Screen
     data object Settings : Screen
     data object Projects : Screen
 }
@@ -75,7 +77,7 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
     when (val s = screen) {
         Screen.Scan -> ScanScreen(
             partCount = partCount,
-            onInventory = { screen = Screen.Inventory },
+            onInventory = { screen = Screen.Inventory() },
             onSettings = { screen = Screen.Settings },
             readBarcodes = prefs.readBarcodes,
             onFrames = { frames, photo, codes ->
@@ -115,20 +117,37 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
             })
         }
 
-        Screen.Inventory -> {
-            BackHandler {
-                partCount = db.all().size
-                screen = Screen.Scan
+        is Screen.Inventory -> {
+            fun back() {
+                if (s.bin != null) {
+                    screen = Screen.Locations
+                } else {
+                    partCount = db.all().size
+                    screen = Screen.Scan
+                }
             }
-            InventoryScreen(db = db, secrets = secrets, onBack = {
-                partCount = db.all().size
-                screen = Screen.Scan
-            }, onProjects = { screen = Screen.Projects })
+            BackHandler { back() }
+            InventoryScreen(
+                db = db, secrets = secrets, onBack = ::back,
+                onProjects = { screen = Screen.Projects },
+                onLocations = { screen = Screen.Locations },
+                bin = s.bin,
+                onClearBin = { screen = Screen.Inventory() },
+            )
+        }
+
+        Screen.Locations -> {
+            BackHandler { screen = Screen.Inventory() }
+            LocationsScreen(
+                db = db, prefs = prefs,
+                onBack = { screen = Screen.Inventory() },
+                onOpen = { screen = Screen.Inventory(it) },
+            )
         }
 
         Screen.Projects -> {
-            BackHandler { screen = Screen.Inventory }
-            ProjectsScreen(db = db, onBack = { screen = Screen.Inventory })
+            BackHandler { screen = Screen.Inventory() }
+            ProjectsScreen(db = db, onBack = { screen = Screen.Inventory() })
         }
     }
 }

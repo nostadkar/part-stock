@@ -23,6 +23,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.DeveloperBoard
+import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
@@ -45,6 +46,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -58,6 +60,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.partstock.scanner.parse.Categories
 import com.partstock.scanner.parse.Links
+import com.partstock.scanner.parse.Locations
 import com.partstock.scanner.parse.PriceRefresh
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -68,7 +71,16 @@ import java.time.LocalDate
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun InventoryScreen(db: InventoryDb, secrets: SecretStore, onBack: () -> Unit, onProjects: () -> Unit = {}) {
+fun InventoryScreen(
+    db: InventoryDb,
+    secrets: SecretStore,
+    onBack: () -> Unit,
+    onProjects: () -> Unit = {},
+    onLocations: () -> Unit = {},
+    /** Show only parts with stock in this bin (picked on the Locations screen); null = all. */
+    bin: String? = null,
+    onClearBin: () -> Unit = {},
+) {
     val context = LocalContext.current
     var version by remember { mutableIntStateOf(0) } // bump to reload after edits
     val parts = remember(version) { db.all() }
@@ -98,9 +110,10 @@ fun InventoryScreen(db: InventoryDb, secrets: SecretStore, onBack: () -> Unit, o
     val counts = remember(parts) { parts.groupingBy { it.category }.eachCount() }
     val lowCount = remember(parts) { parts.count { it.isLow() } }
     val tracked = remember(parts) { parts.any { it.minQty != null } }
-    val shown = remember(parts, query, bucket, lowOnly) {
+    val shown = remember(parts, query, bucket, lowOnly, bin) {
         parts.filter { p ->
-            (bucket == null || p.category == bucket) && (!lowOnly || p.isLow()) && (query.isBlank() || p.matches(query))
+            (bucket == null || p.category == bucket) && (!lowOnly || p.isLow()) && (query.isBlank() || p.matches(query)) &&
+                (bin == null || Locations.keyOf(p.bins(), bin) != null)
         }
     }
     val groups = remember(shown) {
@@ -121,6 +134,9 @@ fun InventoryScreen(db: InventoryDb, secrets: SecretStore, onBack: () -> Unit, o
                 actions = {
                     IconButton(onClick = { refreshing = true }) {
                         Icon(Icons.Filled.Refresh, contentDescription = "Refresh prices")
+                    }
+                    IconButton(onClick = onLocations) {
+                        Icon(Icons.Filled.Inventory2, contentDescription = "Locations")
                     }
                     IconButton(onClick = onProjects) {
                         Icon(Icons.Filled.DeveloperBoard, contentDescription = "Projects / BOMs")
@@ -179,6 +195,14 @@ fun InventoryScreen(db: InventoryDb, secrets: SecretStore, onBack: () -> Unit, o
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (bin != null) {
+                FilterChip(
+                    selected = true,
+                    onClick = onClearBin,
+                    label = { Text("Bin ${bin} · ${shown.size} part${if (shown.size == 1) "" else "s"} ✕") },
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
             if (counts.size > 1 || tracked) {
                 Row(
                     Modifier.horizontalScroll(rememberScrollState()).padding(top = 8.dp),
@@ -245,8 +269,11 @@ fun InventoryScreen(db: InventoryDb, secrets: SecretStore, onBack: () -> Unit, o
                                 if (p.description.isNotBlank()) Text(p.description, style = MaterialTheme.typography.bodySmall)
                                 val chips = p.specs().chips()
                                 if (chips.isNotEmpty()) SpecChips(chips, Modifier.padding(top = 4.dp))
-                                val meta = listOf(p.manufacturer, if (p.location.isNotBlank()) "Bin ${p.location}" else "")
-                                    .filter { it.isNotBlank() }.joinToString(" · ")
+                                val bins = p.bins()
+                                val where = Locations.summary(bins).let { w ->
+                                    if (w.isNotBlank() && bins.size == 1) "Bin $w" else w
+                                }
+                                val meta = listOf(p.manufacturer, where).filter { it.isNotBlank() }.joinToString(" · ")
                                 if (meta.isNotBlank()) {
                                     Text(meta, style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -284,8 +311,8 @@ fun InventoryScreen(db: InventoryDb, secrets: SecretStore, onBack: () -> Unit, o
         EditDialog(
             part = p,
             onDismiss = { editing = null },
-            onSave = { q, loc, desc, cost, cat, use, min ->
-                db.update(p.id, q, loc, desc, cost, cat, min)
+            onSave = { stock, loc, desc, cost, cat, use, min ->
+                db.update(p.id, stock, loc, desc, cost, cat, min)
                 if (use > 0) {
                     val left = db.use(p.id, use)
                     toast("Used $use · $left left")
@@ -298,6 +325,13 @@ fun InventoryScreen(db: InventoryDb, secrets: SecretStore, onBack: () -> Unit, o
                 editing = null
                 version++
                 toast("Deleted ${p.mpn.ifBlank { p.customerPn }}")
+            },
+            knownBins = remember(version) { db.locations().map { it.name } },
+            onMove = { from, to, n ->
+                val moved = db.move(p.id, from, to, n) ?: 0
+                editing = null
+                version++
+                toast(if (moved > 0) "Moved $moved from $from to ${Locations.normalize(to)}" else "Nothing to move")
             },
         )
     }
@@ -556,12 +590,21 @@ private fun BuildKitDialog(db: InventoryDb, onDismiss: () -> Unit, onBuilt: (Str
 private fun EditDialog(
     part: PartRow,
     onDismiss: () -> Unit,
-    onSave: (Int, String, String, Double?, String, Int, Int?) -> Unit,
+    /** Pieces per bin, main bin, description, cost, category, pieces to use, minimum. */
+    onSave: (Map<String, Int>, String, String, Double?, String, Int, Int?) -> Unit,
     onDelete: () -> Unit,
+    knownBins: List<String> = emptyList(),
+    onMove: (from: String, to: String, qty: Int) -> Unit = { _, _, _ -> },
 ) {
     val context = LocalContext.current
+    val startBins = remember { part.bins() }
+    val multi = startBins.size > 1
+    // One bin: the usual Quantity + Bin fields. Several bins: a count per bin, and the main bin stays as it is.
     var qty by remember { mutableStateOf(part.quantity.toString()) }
-    var location by remember { mutableStateOf(part.location) }
+    val binQty = remember { mutableStateListOf(*startBins.values.map { it.toString() }.toTypedArray()) }
+    var moving by remember { mutableStateOf(false) }
+    // With one bin, edit that bin's name (it can differ from the main bin after the main bin was emptied).
+    var location by remember { mutableStateOf(if (multi) part.location else Locations.plain(startBins.keys.first())) }
     var description by remember { mutableStateOf(part.description) }
     var cost by remember { mutableStateOf(part.unitCost?.let { InventoryDb.fmtCost(it) }.orEmpty()) }
     var category by remember { mutableStateOf(part.category) }
@@ -570,7 +613,11 @@ private fun EditDialog(
     var use by remember { mutableIntStateOf(0) }
     var confirmUse by remember { mutableStateOf(false) }
     val link = part.link()
-    val stock = qty.toIntOrNull() ?: part.quantity
+    val stock = if (multi) startBins.values.withIndex().sumOf { (i, q) -> binQty[i].toIntOrNull() ?: q }
+        else qty.toIntOrNull() ?: part.quantity
+    fun stockMap(): Map<String, Int> =
+        if (multi) startBins.keys.withIndex().associate { (i, b) -> b to (binQty[i].toIntOrNull() ?: startBins.getValue(b)) }
+        else mapOf(Locations.normalize(location) to stock)
     // "Price from Mouser, Oct 18", shown while the cost is the one that lookup saved.
     val priceLabel = remember { PriceRefresh.label(part.priceSource, part.priceCheckedAt, LocalDate.now()) }
     val savedCost = remember { part.unitCost?.let { InventoryDb.fmtCost(it) }.orEmpty() }
@@ -597,10 +644,30 @@ private fun EditDialog(
                 }
                 OutlinedTextField(description, { description = it }, label = { Text("Description") })
                 CategoryPicker(category) { category = it }
-                OutlinedTextField(
-                    qty, { v -> qty = v.filter { it.isDigit() } }, label = { Text("Quantity") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                )
+                if (multi) {
+                    Text("Stock by bin · total $stock", style = MaterialTheme.typography.titleSmall)
+                    startBins.keys.forEachIndexed { i, b ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                b + if (Locations.same(b, part.location)) " (main)" else "",
+                                modifier = Modifier.weight(1f),
+                            )
+                            OutlinedTextField(
+                                binQty[i], { v -> binQty[i] = v.filter { it.isDigit() }.take(7) }, singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.width(110.dp),
+                            )
+                        }
+                    }
+                } else {
+                    OutlinedTextField(
+                        qty, { v -> qty = v.filter { it.isDigit() } }, label = { Text("Quantity") }, singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    )
+                }
+                TextButton(onClick = { moving = true }) {
+                    Text(if (multi) "Move between bins…" else "Move some to another bin…")
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Use", modifier = Modifier.width(40.dp))
                     IconButton(onClick = {
@@ -643,7 +710,9 @@ private fun EditDialog(
                         { Text(priceLabel) }
                     } else null,
                 )
-                OutlinedTextField(location, { location = it }, label = { Text("Bin / location") }, singleLine = true)
+                if (!multi) {
+                    OutlinedTextField(location, { location = it }, label = { Text("Bin / location") }, singleLine = true)
+                }
                 if (part.notes.isNotBlank()) Text("Notes: ${part.notes}", style = MaterialTheme.typography.bodySmall)
                 Text("Scanned ${part.scans}× · updated ${part.updatedAt}", style = MaterialTheme.typography.bodySmall)
             }
@@ -652,7 +721,7 @@ private fun EditDialog(
             TextButton(onClick = {
                 if (use > stock && !confirmUse) confirmUse = true
                 else onSave(
-                    stock, location, description, cost.toDoubleOrNull(), category, use,
+                    stockMap(), location, description, cost.toDoubleOrNull(), category, use,
                     minimum.toIntOrNull()?.takeIf { it > 0 },
                 )
             }) { Text(if (confirmUse) "Tap again to save" else "Save") }
@@ -662,5 +731,80 @@ private fun EditDialog(
                 Text(if (confirmDelete) "Tap again to delete" else "Delete", color = MaterialTheme.colorScheme.error)
             }
         },
+    )
+
+    if (moving) {
+        MoveDialog(
+            bins = startBins,
+            knownBins = knownBins,
+            onDismiss = { moving = false },
+            onMove = { from, to, n ->
+                moving = false
+                onMove(from, to, n)
+            },
+        )
+    }
+}
+
+/** Move N pieces of one part from one of its bins to another bin (new or existing). Saves straight away. */
+@Composable
+private fun MoveDialog(
+    bins: Map<String, Int>,
+    knownBins: List<String>,
+    onDismiss: () -> Unit,
+    onMove: (String, String, Int) -> Unit,
+) {
+    val sources = bins.filterValues { it > 0 }.keys.toList()
+    var from by remember { mutableStateOf(sources.firstOrNull()) }
+    var to by remember { mutableStateOf("") }
+    var qtyText by remember { mutableStateOf(sources.firstOrNull()?.let { bins[it]?.toString() }.orEmpty()) }
+    val have = from?.let { bins[it] } ?: 0
+    val n = qtyText.toIntOrNull() ?: 0
+    val ok = from != null && to.isNotBlank() && n in 1..have && !Locations.same(from, to)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Move stock") },
+        text = {
+            if (sources.isEmpty()) {
+                Text("Nothing in stock to move.")
+            } else Column(
+                Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("From", style = MaterialTheme.typography.titleSmall)
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    sources.forEach { b ->
+                        FilterChip(
+                            selected = from == b,
+                            onClick = {
+                                from = b
+                                qtyText = bins[b]?.toString().orEmpty()
+                            },
+                            label = { Text("$b · ${bins[b]}") },
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    qtyText, { v -> qtyText = v.filter { it.isDigit() }.take(7) },
+                    label = { Text("How many") }, singleLine = true,
+                    supportingText = { Text(if (n > have) "Only $have in $from" else "$have in $from") },
+                    isError = n > have,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+                OutlinedTextField(to, { to = it }, label = { Text("To bin") }, singleLine = true)
+                val others = knownBins.filter { k -> from == null || !Locations.same(k, from) }
+                if (others.isNotEmpty()) {
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        others.forEach { b ->
+                            FilterChip(selected = Locations.same(b, to) && to.isNotBlank(), onClick = { to = b }, label = { Text(b) })
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = ok, onClick = { from?.let { onMove(it, to.trim(), n) } }) { Text("Move") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

@@ -10,6 +10,7 @@ import com.partstock.scanner.parse.BuildPlan
 import com.partstock.scanner.parse.Categories
 import com.partstock.scanner.parse.InventoryCsv
 import com.partstock.scanner.parse.Links
+import com.partstock.scanner.parse.Locations
 import com.partstock.scanner.parse.PartSpecs
 import com.partstock.scanner.parse.ReorderList
 import java.math.BigDecimal
@@ -50,13 +51,18 @@ data class PartRow(
     val voltage: String = "",
     val pkg: String = "",
     val datasheetUrl: String = "",
+    /** Pieces per bin, in order; [quantity] is their sum. Empty when not loaded (see [bins]). */
+    val stock: Map<String, Int> = emptyMap(),
 )
+
+/** Pieces per bin; for a row loaded without its stock, the one bin in [PartRow.location]. */
+fun PartRow.bins(): Map<String, Int> = stock.ifEmpty { mapOf(Locations.normalize(location) to quantity) }
 
 fun PartRow.specs(): PartSpecs = PartSpecs(specValue, tolerance, voltage, pkg)
 
 /** Search box match: text in any field, or equal values (10k = 10kΩ = 10000, 0.1uF = 100nF) and packages. */
 fun PartRow.matches(query: String): Boolean = PartSpecs.matches(
-    query, listOf(mpn, description, manufacturer, location, distributorPn, customerPn, category), specs(),
+    query, listOf(mpn, description, manufacturer, location, distributorPn, customerPn, category) + stock.keys, specs(),
 )
 
 /** At or below its minimum (the Inventory screen's "Low stock" filter). */
@@ -156,11 +162,14 @@ data class ProjectLine(
     fun toReq(): BuildPlan.Req = BuildPlan.Req.of(toBomLine()).also { it.pickedId = partId }
 }
 
+/** A storage location with how many different parts and pieces it holds. */
+data class LocationSummary(val name: String, val parts: Int, val pieces: Int)
+
 /** What a CSV restore did (or would do, for a dry run). */
 data class ImportSummary(val rows: Int, val added: Int, val updated: Int, val removed: Int)
 
 /** Inventory stored on the phone: one row per part, plus a log of every save. */
-class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 9) {
+class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 10) {
 
     /** Called after every change to the parts table (used for auto backup). */
     @Volatile var onChanged: (() -> Unit)? = null
@@ -192,6 +201,17 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         db.execSQL("CREATE INDEX IF NOT EXISTS scan_log_bag_fp ON scan_log(bag_fp)")
         createKitItems(db)
         createProjects(db)
+        createStock(db)
+    }
+
+    /** Pieces per part per bin. parts.quantity stays as the total and parts.location as the main bin. */
+    private fun createStock(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS part_stock (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, part_id INTEGER NOT NULL, location TEXT NOT NULL,
+                qty INTEGER NOT NULL DEFAULT 0, UNIQUE(part_id, location))"""
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS part_stock_location ON part_stock(location)")
     }
 
     /** Projects and their BOM lines. New tables only: nothing in the parts table changes. */
@@ -277,6 +297,114 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             // New tables only (projects / BOMs); existing parts, scan log and kits are untouched.
             createProjects(db)
         }
+        if (oldVersion < 10) {
+            // New table only: each part's quantity goes into its bin (blank bin = "Unassigned"). The parts table keeps
+            // its quantity (now the total) and location (the main bin), so nothing is lost or changed.
+            createStock(db)
+            db.execSQL(
+                "INSERT OR IGNORE INTO part_stock (part_id, location, qty) " +
+                    "SELECT id, CASE WHEN TRIM(location) = '' THEN ? ELSE TRIM(location) END, MAX(quantity, 0) FROM parts",
+                arrayOf(Locations.UNASSIGNED),
+            )
+        }
+    }
+
+    // ---------------------------------------------------------------- stock per location
+
+    private fun stockOf(db: SQLiteDatabase, partId: Long): LinkedHashMap<String, Int> =
+        db.rawQuery("SELECT location, qty FROM part_stock WHERE part_id = ? ORDER BY id", arrayOf(partId.toString())).use { c ->
+            val m = LinkedHashMap<String, Int>()
+            while (c.moveToNext()) m[c.getString(0).orEmpty()] = c.getInt(1)
+            m
+        }
+
+    /** Stock of a part loaded without it; falls back to its quantity in its main bin (rows from before v10). */
+    private fun stockOrLegacy(db: SQLiteDatabase, r: PartRow): LinkedHashMap<String, Int> =
+        stockOf(db, r.id).ifEmpty { linkedMapOf(Locations.normalize(r.location) to r.quantity) }
+
+    /** Stores the part's bins (empty ones dropped, see [Locations.compact]) and sets parts.quantity to the total. */
+    private fun writeStock(db: SQLiteDatabase, partId: Long, stock: Map<String, Int>, primary: String): Int {
+        val kept = Locations.compact(stock, Locations.normalize(primary))
+        db.delete("part_stock", "part_id = ?", arrayOf(partId.toString()))
+        for ((bin, q) in kept) {
+            db.insert("part_stock", null, ContentValues().apply {
+                put("part_id", partId); put("location", bin); put("qty", q)
+            })
+        }
+        val total = Locations.total(kept)
+        db.update("parts", ContentValues().apply { put("quantity", total) }, "id = ?", arrayOf(partId.toString()))
+        return total
+    }
+
+    /** Every bin in use, with part and piece counts, in name order ("Unassigned" last). */
+    fun locations(): List<LocationSummary> =
+        readableDatabase.rawQuery(
+            "SELECT s.location, COUNT(DISTINCT s.part_id), SUM(s.qty) FROM part_stock s JOIN parts p ON p.id = s.part_id " +
+                "GROUP BY s.location COLLATE NOCASE ORDER BY s.location = ?, s.location COLLATE NOCASE",
+            arrayOf(Locations.UNASSIGNED),
+        ).use { c ->
+            buildList { while (c.moveToNext()) add(LocationSummary(c.getString(0).orEmpty(), c.getInt(1), c.getInt(2))) }
+        }
+
+    /**
+     * Moves up to [qty] pieces of a part from one bin to another and logs it. Returns how many moved, or null if the
+     * part is gone. The main bin follows the stock when the old main bin ends up empty.
+     */
+    fun move(id: Long, from: String, to: String, qty: Int): Int? {
+        val db = writableDatabase
+        db.beginTransaction()
+        val moved = try {
+            val r = byId(id) ?: return null
+            val before = stockOrLegacy(db, r)
+            val n = minOf(maxOf(0, qty), Locations.qtyIn(before, from))
+            if (n == 0 || Locations.same(from, to)) return 0
+            val after = Locations.move(before, from, to, n)
+            val primary = if (Locations.same(r.location, from) && Locations.qtyIn(after, from) == 0) Locations.plain(to)
+                else r.location
+            val now = now()
+            val total = writeStock(db, id, after, primary)
+            db.update("parts", ContentValues().apply { put("location", primary); put("updated_at", now) },
+                "id = ?", arrayOf(id.toString()))
+            db.insert("scan_log", null, ContentValues().apply {
+                put("ts", now); put("part_key", r.key()); put("mode", "move")
+                put("qty", n); put("total", total); put("location", "${Locations.normalize(from)} → ${Locations.normalize(to)}")
+                put("source", "Move"); put("distributor_pn", r.distributorPn)
+                put("customer_pn", r.customerPn); put("raw", "")
+            })
+            db.setTransactionSuccessful()
+            n
+        } finally {
+            db.endTransaction()
+        }
+        onChanged?.invoke()
+        return moved
+    }
+
+    /** Renames a bin on every part at once (merging into [to] where a part already has it). Returns parts changed. */
+    fun renameLocation(from: String, to: String): Int {
+        val target = Locations.normalize(to)
+        if (Locations.normalize(from) == target) return 0
+        val db = writableDatabase
+        var changed = 0
+        db.beginTransaction()
+        try {
+            val ids = db.rawQuery(
+                "SELECT DISTINCT part_id FROM part_stock WHERE location = ? COLLATE NOCASE", arrayOf(Locations.normalize(from))
+            ).use { c -> buildList { while (c.moveToNext()) add(c.getLong(0)) } }
+            for (id in ids) {
+                val r = byId(id) ?: continue
+                val stock = Locations.rename(stockOf(db, id), from, target)
+                val primary = if (Locations.same(r.location, from)) Locations.plain(target) else r.location
+                writeStock(db, id, stock, primary)
+                db.update("parts", ContentValues().apply { put("location", primary) }, "id = ?", arrayOf(id.toString()))
+                changed++
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        if (changed > 0) onChanged?.invoke()
+        return changed
     }
 
     /** Matches on MPN, then customer PN, then distributor PN, ignoring case and spaces. */
@@ -293,7 +421,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             val row = readableDatabase.rawQuery(
                 "SELECT * FROM parts WHERE UPPER(REPLACE($column, ' ', '')) = ? LIMIT 1", arrayOf(k)
             ).use { c -> if (c.moveToFirst()) c.toRow() else null }
-            if (row != null) return Match(row, label)
+            if (row != null) return Match(row.copy(stock = stockOf(readableDatabase, row.id)), label)
         }
         return null
     }
@@ -326,9 +454,12 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             val partId: Long
             if (hit != null) {
                 val r = hit.row
-                total = if (e.addMode) r.quantity + e.quantity else e.quantity
+                // Add puts the pieces in this scan's bin (the part's main bin if none was given); Set sets that bin's count.
+                val bin = Locations.normalize(e.location.ifBlank { r.location })
+                val before = stockOrLegacy(db, r)
+                val stock = if (e.addMode) Locations.add(before, bin, e.quantity) else Locations.set(before, bin, e.quantity)
+                total = writeStock(db, r.id, stock, e.location.ifBlank { r.location })
                 val v = ContentValues().apply {
-                    put("quantity", total)
                     // Fill blanks from this label without overwriting what's there.
                     fill("mpn", r.mpn, e.mpn)
                     if (e.descriptionFromMouser && e.description.isNotBlank()) put("description", e.description)
@@ -377,6 +508,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                         put("price_source", e.priceSource); put("price_checked_at", now)
                     }
                 })
+                if (partId > 0) writeStock(db, partId, mapOf(Locations.normalize(e.location) to e.quantity), e.location)
             }
             db.insert("scan_log", null, ContentValues().apply {
                 put("ts", now)
@@ -414,15 +546,21 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         db.beginTransaction()
         try {
             val now = now()
-            if (replace) removed = db.delete("parts", null, null)
+            if (replace) {
+                removed = db.delete("parts", null, null)
+                db.delete("part_stock", null, null)
+            }
             for (r in rows) {
+                // The Locations column wins when present; otherwise the whole quantity is in the Location bin.
+                val fileStock = Locations.parse(r.locations).ifEmpty { linkedMapOf(Locations.normalize(r.location) to r.quantity) }
+                val fileQty = Locations.total(fileStock)
                 val category = r.category.ifBlank { Categories.classify(r.description, r.notes) }
                 val stamp = r.updatedAt.ifBlank { now }
                 val hit = find(r.mpn, r.customerPn, r.distributorPn)
                 if (hit != null) {
                     val old = hit.row
                     db.update("parts", ContentValues().apply {
-                        put("quantity", r.quantity)
+                        put("quantity", fileQty)
                         take("mpn", r.mpn); take("description", r.description); take("manufacturer", r.manufacturer)
                         take("location", r.location); take("distributor", r.distributor)
                         take("distributor_pn", r.distributorPn); take("customer_pn", r.customerPn)
@@ -436,11 +574,12 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                         put("scans", r.scans ?: old.scans)
                         put("updated_at", stamp)
                     }, "id = ?", arrayOf(old.id.toString()))
+                    writeStock(db, old.id, fileStock, r.location.ifBlank { old.location })
                     updated++
                 } else {
-                    db.insert("parts", null, ContentValues().apply {
+                    val newId = db.insert("parts", null, ContentValues().apply {
                         put("mpn", r.mpn); put("description", r.description); put("manufacturer", r.manufacturer)
-                        put("quantity", r.quantity); put("location", r.location); put("distributor", r.distributor)
+                        put("quantity", fileQty); put("location", r.location); put("distributor", r.distributor)
                         put("distributor_pn", r.distributorPn); put("customer_pn", r.customerPn)
                         put("source", r.source); put("notes", r.notes); put("date_code", r.dateCode)
                         put("ref_des", r.refDes); put("scans", r.scans ?: 1); put("updated_at", stamp)
@@ -450,6 +589,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                         r.unitCost?.let { put("unit_cost", it) }
                         r.minimum?.let { put("min_qty", it) }
                     })
+                    if (newId > 0) writeStock(db, newId, fileStock, r.location)
                     added++
                 }
                 if (!dryRun) {
@@ -457,7 +597,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                         put("ts", now)
                         put("part_key", r.mpn.ifBlank { r.customerPn.ifBlank { r.distributorPn } })
                         put("mode", if (replace) "restore" else "import")
-                        put("qty", r.quantity); put("total", r.quantity); put("location", r.location)
+                        put("qty", fileQty); put("total", fileQty); put("location", r.location)
                         put("source", "CSV import"); put("distributor_pn", r.distributorPn)
                         put("customer_pn", r.customerPn); put("raw", "")
                     })
@@ -480,18 +620,25 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         ).use { c -> if (c.moveToFirst()) BagHit(c.getString(0).orEmpty(), c.getInt(1), c.getString(2).orEmpty()) else null }
     }
 
-    fun all(): List<PartRow> =
-        readableDatabase.rawQuery("SELECT * FROM parts ORDER BY category, UPPER(mpn), UPPER(customer_pn)", null).use { c ->
-            buildList { while (c.moveToNext()) add(c.toRow()) }
+    fun all(): List<PartRow> {
+        val stock = HashMap<Long, LinkedHashMap<String, Int>>()
+        readableDatabase.rawQuery("SELECT part_id, location, qty FROM part_stock ORDER BY id", null).use { c ->
+            while (c.moveToNext()) stock.getOrPut(c.getLong(0)) { LinkedHashMap() }[c.getString(1).orEmpty()] = c.getInt(2)
         }
+        return readableDatabase.rawQuery("SELECT * FROM parts ORDER BY category, UPPER(mpn), UPPER(customer_pn)", null).use { c ->
+            buildList { while (c.moveToNext()) c.toRow().let { add(it.copy(stock = stock[it.id].orEmpty())) } }
+        }
+    }
 
+    /** Saves the edit dialog. [stock] is the part's pieces per bin (one bin for most parts); [location] its main bin. */
     fun update(
-        id: Long, quantity: Int, location: String, description: String, unitCost: Double?, category: String,
+        id: Long, stock: Map<String, Int>, location: String, description: String, unitCost: Double?, category: String,
         minQty: Int?,
     ) {
         val old = byId(id)
+        writeStock(writableDatabase, id, stock, location)
         val v = ContentValues().apply {
-            put("quantity", quantity); put("location", location.trim()); put("category", category)
+            put("location", location.trim()); put("category", category)
             put("description", description.trim()); put("updated_at", now())
         }
         // A new description: re-read value / package from it, keeping what it doesn't mention.
@@ -512,7 +659,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
     private fun byId(id: Long): PartRow? =
         readableDatabase.rawQuery("SELECT * FROM parts WHERE id = ?", arrayOf(id.toString())).use { c ->
             if (c.moveToFirst()) c.toRow() else null
-        }
+        }?.let { it.copy(stock = stockOf(readableDatabase, it.id)) }
 
     /**
      * Applies a distributor lookup to a saved part: price (with source and date), description, link, and the
@@ -543,6 +690,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
     fun delete(id: Long) {
         writableDatabase.delete("parts", "id = ?", arrayOf(id.toString()))
         writableDatabase.delete("kit_items", "part_id = ?", arrayOf(id.toString()))
+        writableDatabase.delete("part_stock", "part_id = ?", arrayOf(id.toString()))
         onChanged?.invoke()
     }
 
@@ -566,10 +714,9 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         val r = db.rawQuery("SELECT * FROM parts WHERE id = ?", arrayOf(id.toString())).use { c ->
             if (c.moveToFirst()) c.toRow() else null
         } ?: return null
-        val total = maxOf(0, r.quantity - qty)
-        db.update("parts", ContentValues().apply {
-            put("quantity", total); put("updated_at", now)
-        }, "id = ?", arrayOf(id.toString()))
+        // Taken from the main bin first, then the other bins in order.
+        val total = writeStock(db, id, Locations.take(stockOrLegacy(db, r), r.location, qty), r.location)
+        db.update("parts", ContentValues().apply { put("updated_at", now) }, "id = ?", arrayOf(id.toString()))
         db.insert("scan_log", null, ContentValues().apply {
             put("ts", now)
             put("part_key", r.mpn.ifBlank { r.customerPn.ifBlank { r.distributorPn } })
@@ -747,7 +894,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                 it.unitCost?.let { c -> plain(c * it.quantity) }.orEmpty(),
                 it.location, it.distributor, it.distributorPn, it.customerPn, it.link(), it.source, it.notes,
                 it.dateCode, it.refDes, it.scans.toString(), it.updatedAt, it.minQty?.toString().orEmpty(),
-                it.specValue, it.tolerance, it.voltage, it.pkg, it.datasheetUrl,
+                it.specValue, it.tolerance, it.voltage, it.pkg, it.datasheetUrl, Locations.format(it.bins()),
             )
         }
         return csv(header, rows)
@@ -801,6 +948,8 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
     private fun ContentValues.fill(column: String, current: String, new: String) {
         if (current.isBlank() && new.isNotBlank()) put(column, new)
     }
+
+    private fun PartRow.key() = mpn.ifBlank { customerPn.ifBlank { distributorPn } }
 
     private fun Cursor.str(col: String) = getString(getColumnIndexOrThrow(col)).orEmpty()
     private fun Cursor.int(col: String) = getInt(getColumnIndexOrThrow(col))

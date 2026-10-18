@@ -165,6 +165,21 @@ public class InventoryCsvTest {
         assertEquals("", old.datasheet);
         int i = InventoryCsv.HEADER.indexOf("Minimum");
         assertEquals("Value", InventoryCsv.HEADER.get(i + 1));
-        assertEquals("Datasheet", InventoryCsv.HEADER.get(InventoryCsv.HEADER.size() - 1));
+        assertEquals("Datasheet", InventoryCsv.HEADER.get(InventoryCsv.HEADER.size() - 2));
+    }
+
+    @Test
+    public void readsLocationsColumnNextToTotalQuantity() {
+        String csv = "MPN,Quantity,Location,Locations\r\n"
+                + "RC0603FR-0710KL,1200,A3,A3: 200; R2: 1000\r\n"
+                + "2SK3019-TP,5,B1,\r\n";
+        List<InventoryCsv.Row> rows = InventoryCsv.read(csv).rows;
+        assertEquals(1200, rows.get(0).quantity);
+        assertEquals("A3: 200; R2: 1000", rows.get(0).locations);
+        assertEquals(1200, Locations.total(Locations.parse(rows.get(0).locations)));
+        assertEquals("", rows.get(1).locations);
+        assertEquals("", InventoryCsv.read("MPN,Quantity\r\nA1,5\r\n").rows.get(0).locations);
+        assertEquals("Locations", InventoryCsv.HEADER.get(InventoryCsv.HEADER.size() - 1));
+        assertTrue(InventoryCsv.HEADER.contains("Quantity"));
     }
 }

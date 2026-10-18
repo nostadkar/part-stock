@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import com.partstock.scanner.parse.Categories
 import com.partstock.scanner.parse.FieldReader
 import com.partstock.scanner.parse.LabelBarcode
+import com.partstock.scanner.parse.Locations
 import com.partstock.scanner.parse.OcrLine
 import com.partstock.scanner.parse.Links
 import com.partstock.scanner.parse.ParsedPart
@@ -407,7 +408,7 @@ fun ReviewScreen(
             rescanMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
 
             seenBag?.let { DuplicateBagCard(it) }
-            StockBanner(existing, hasKey, qty.trim().toIntOrNull(), addMode)
+            StockBanner(existing, hasKey, qty.trim().toIntOrNull(), addMode, location)
 
             Field("Manufacturer part number", mpn, { mpn = it }, mono = true,
                 hint = when {
@@ -604,18 +605,21 @@ private fun DuplicateBagCard(hit: BagHit) {
 }
 
 @Composable
-private fun StockBanner(existing: Match?, hasKey: Boolean, qty: Int?, addMode: Boolean) {
+private fun StockBanner(existing: Match?, hasKey: Boolean, qty: Int?, addMode: Boolean, location: String) {
     if (existing != null) {
         val r = existing.row
+        // Add goes into this bin (the part's main bin if blank); Set sets this bin's count, other bins stay.
+        val bins = r.bins()
+        val bin = Locations.normalize(location.ifBlank { r.location })
         val after = when {
             qty == null -> r.quantity
             addMode -> r.quantity + qty
-            else -> qty
+            else -> r.quantity - Locations.qtyIn(bins, bin) + qty
         }
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
             Column(Modifier.padding(12.dp).fillMaxWidth()) {
                 Text("Already in stock: ${r.quantity}", style = MaterialTheme.typography.titleSmall)
-                val where = if (r.location.isNotBlank()) " · bin ${r.location}" else ""
+                val where = Locations.summary(bins).let { if (it.isNotBlank()) " · bin $it" else "" }
                 Text("${r.mpn.ifBlank { r.customerPn }} (matched by ${existing.matchedOn})$where",
                     style = MaterialTheme.typography.bodySmall)
                 Text("After save: $after", style = MaterialTheme.typography.bodyMedium)

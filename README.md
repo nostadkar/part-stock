@@ -99,8 +99,16 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   so you can compare. Each of MPN, description, quantity, distributor PN and customer PN has a small camera icon: frame
   just that part of the label in the box and tap the shutter. Only the text inside the box is used, cleaned like a
   full scan (field names dropped, split part numbers joined, O/0 slips in quantities fixed), and only that field changes.
-- **Add to stock** adds the quantity; **Set count to this** overwrites it (use after a recount).
+- **Add to stock** adds the quantity; **Set count to this** overwrites it (use after a recount). Both apply to the bin
+  on the review screen (the part's main bin if it's blank), so Set on a part kept in two bins only resets that bin.
 - **Bin / location** is remembered for the next scan, handy when filling one drawer at a time.
+- **Stock in several bins**: a part can be in more than one place (200 in drawer A3, a reel on shelf R2); its quantity
+  is the total. Scanning into another bin adds the pieces there. In the edit dialog, *Move some to another bin…* moves N
+  pieces from one bin to another (new or existing); a part in several bins shows a count per bin to correct. *Use*
+  takes from the main bin first, then the others. **Locations** (box icon on the Inventory screen) lists every bin with
+  how many parts and pieces it holds; tap a bin to see its parts, or the pencil to rename it on every part at once
+  (renaming onto an existing bin merges them). Parts saved without a bin are under *Unassigned*. Updating to this build
+  moved each part's quantity into its bin without changing anything else.
 - Entrust kit labels print a per-board quantity (Qty 29) and a kit count (Qty 15). The app pre-fills the
   per-board number and offers the product; count the bag if you're not sure which applies.
 - **Inventory** (top right on the scan screen) lists everything with search. Tap a part to change the
@@ -125,7 +133,8 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   MPN, last unit price and link. Its first two columns, *Mouser Part Number* and *Quantity*, are what Mouser's BOM tool
   asks for; DigiKey parts have their part number in a separate column.
 - **Export** (share icon on the Inventory screen): share or save the inventory CSV, or the scan log CSV
-  (every save with the raw OCR text). The CSV opens directly in Google Sheets or Excel.
+  (every save with the raw OCR text). *Quantity* is the total and *Location* the main bin; the last column,
+  *Locations*, lists stock per bin like `A3: 200; R2: 1000` and is read back by *Restore from CSV*. The CSV opens directly in Google Sheets or Excel.
 - **Import an order** (share icon on the Inventory screen → *Import Mouser / DigiKey order CSV…*): pick a CSV exported
   from Mouser (order history or cart) or DigiKey (order or cart). Mouser vs DigiKey is told from the part-number column
   (or DigiKey's `-ND` numbers). Columns are found by keywords in the header (*Mouser No/#*, *Mfr. No*, *Manufacturer
@@ -158,7 +167,9 @@ app/src/main/java/com/partstock/scanner/
   parse/ScanMerger.java      Votes field by field across a burst of reads
   Updater.kt                 Checks GitHub releases, downloads and installs a newer APK
   ReviewScreen.kt            Edit fields, stock check, save
-  InventoryScreen.kt         List, search, edit, delete, export
+  InventoryScreen.kt         List, search, edit, move between bins, delete, export
+  LocationsScreen.kt         Bins with part / piece counts, rename everywhere
+  parse/Locations.java       Stock per bin: add, set, use, move, rename, CSV column (pure Java, unit tested)
   InventoryDb.kt             SQLite storage + CSV
   OrderImport.kt             Import a Mouser / DigiKey order CSV
   ProjectsScreen.kt          Projects / BOMs: buildable count, shortages, Build N

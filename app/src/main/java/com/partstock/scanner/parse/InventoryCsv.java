@@ -10,7 +10,7 @@ import java.util.Map;
 
 /**
  * Reads and writes the inventory CSV (RFC 4180). Reading is forgiving: columns are found by header name in any order,
- * missing columns (older exports had no Category / Unit Cost / Link / Minimum / Value / Package / Datasheet) are left blank, quoted fields may hold commas,
+ * missing columns (older exports had no Category / Unit Cost / Link / Minimum / Value / Package / Datasheet / Locations) are left blank, quoted fields may hold commas,
  * quotes and line breaks, and CRLF or LF line endings both work.
  */
 public final class InventoryCsv {
@@ -20,7 +20,7 @@ public final class InventoryCsv {
     public static final List<String> HEADER = Collections.unmodifiableList(Arrays.asList(
             "Category", "MPN", "Description", "Manufacturer", "Quantity", "Unit Cost", "Total Value", "Location",
             "Distributor", "Distributor PN", "Customer PN", "Link", "Source", "Notes", "Date Code", "Ref Des",
-            "Scans", "Last Updated", "Minimum", "Value", "Tolerance", "Voltage", "Package", "Datasheet"));
+            "Scans", "Last Updated", "Minimum", "Value", "Tolerance", "Voltage", "Package", "Datasheet", "Locations"));
 
     /** One part read from the file. Strings are never null; blank means the file had nothing there. */
     public static final class Row {
@@ -29,6 +29,8 @@ public final class InventoryCsv {
                 dateCode = "", refDes = "", updatedAt = "";
         /** Specs and datasheet link; blank in exports made before they existed. */
         public String value = "", tolerance = "", voltage = "", pkg = "", datasheet = "";
+        /** Stock per bin ({@code A3: 200; R2: 1000}); blank in exports made before locations existed. */
+        public String locations = "";
         public int quantity;
         public Double unitCost;
         public Integer scans;
@@ -164,6 +166,7 @@ public final class InventoryCsv {
                 {"voltage", "voltage", "voltagerating"},
                 {"package", "package", "pkg", "packagecase", "case"},
                 {"datasheet", "datasheet", "datasheeturl", "datasheetlink"},
+                {"locations", "locations", "stocklocations", "bins"},
                 {"minimum", "minimum", "min", "minqty", "minimumqty", "minimumquantity", "reorderpoint"},
         };
         for (String[] group : names) for (int i = 1; i < group.length; i++) ALIASES.put(group[i], group[0]);
@@ -214,6 +217,7 @@ public final class InventoryCsv {
             row.voltage = get(rec, col, "voltage");
             row.pkg = get(rec, col, "package");
             row.datasheet = get(rec, col, "datasheet");
+            row.locations = get(rec, col, "locations");
             row.quantity = Math.max(0, parseInt(get(rec, col, "quantity"), 0));
             row.unitCost = parseCost(get(rec, col, "unitcost"));
             String s = get(rec, col, "scans");
