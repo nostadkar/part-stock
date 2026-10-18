@@ -1,5 +1,8 @@
 package com.partstock.scanner
 
+import android.graphics.Bitmap
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -7,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -15,6 +19,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -40,12 +45,16 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.partstock.scanner.parse.Categories
+import com.partstock.scanner.parse.FieldReader
+import com.partstock.scanner.parse.OcrLine
 import com.partstock.scanner.parse.Links
 import com.partstock.scanner.parse.ParsedPart
 import com.partstock.scanner.parse.PartNumberVariants
@@ -58,6 +67,8 @@ import kotlinx.coroutines.withContext
 @Composable
 fun ReviewScreen(
     part: ParsedPart,
+    /** One of the photos that was read, to compare the fields against; null for older callers. */
+    photo: Bitmap? = null,
     db: InventoryDb,
     prefs: Prefs,
     secrets: SecretStore,
@@ -98,6 +109,32 @@ fun ReviewScreen(
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var showRaw by remember { mutableStateOf(false) }
+    // Per-field rescan: which field the camera is re-reading, and what came of the last one.
+    var rescan by remember { mutableStateOf<FieldReader.Field?>(null) }
+    var rescanMsg by remember { mutableStateOf<String?>(null) }
+    var showPhoto by remember { mutableStateOf(false) }
+    val thumb = remember(photo) { photo?.asImageBitmap() }
+
+    fun applyRescan(f: FieldReader.Field, lines: List<OcrLine>) {
+        val v = FieldReader.read(f, lines)
+        val name = FieldReader.label(f)
+        if (v == null) {
+            rescanMsg = "Couldn't read a $name there (saw \"${lines.joinToString(" ") { it.text }.take(60)}\"). " +
+                "Tap the camera icon to try again, or type it."
+            return
+        }
+        when (f) {
+            FieldReader.Field.MPN -> mpn = v
+            FieldReader.Field.DISTRIBUTOR_PN -> distributorPn = v
+            FieldReader.Field.CUSTOMER_PN -> customerPn = v
+            FieldReader.Field.QUANTITY -> qty = v
+            FieldReader.Field.DESCRIPTION -> {
+                description = v
+                descriptionFromMouser = false
+            }
+        }
+        rescanMsg = "Re-read $name: $v"
+    }
 
     // Check whether this part is already in stock; re-checks as the part numbers are edited.
     LaunchedEffect(mpn, customerPn, distributorPn) {
@@ -341,12 +378,31 @@ fun ReviewScreen(
                 if (part.refDesCount > 0) AssistChip(onClick = {}, label = { Text("${part.refDesCount} ref des") })
             }
 
+            if (thumb != null) {
+                Column(Modifier.fillMaxWidth().clickable { showPhoto = true }) {
+                    Image(
+                        thumb,
+                        contentDescription = "Photo that was read",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp),
+                    )
+                    Text(
+                        "Photo that was read · tap to zoom",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            rescanMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
+
             seenBag?.let { DuplicateBagCard(it) }
             StockBanner(existing, hasKey, qty.trim().toIntOrNull(), addMode)
 
             Field("Manufacturer part number", mpn, { mpn = it }, mono = true,
-                hint = if (part.mpnDerived) "Worked out from the Mouser P/N — check it" else null)
-            Field("Description", description, { description = it }, singleLine = false)
+                hint = if (part.mpnDerived) "Worked out from the Mouser P/N — check it" else null,
+                onRescan = { rescan = FieldReader.Field.MPN })
+            Field("Description", description, { description = it }, singleLine = false,
+                onRescan = { rescan = FieldReader.Field.DESCRIPTION })
             val specs = remember(description, apiSpecs) { apiSpecs.orElse(PartSpecs.fromDescription(description)) }
             if (!specs.isEmpty || datasheetUrl.isNotBlank()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -368,6 +424,7 @@ fun ReviewScreen(
                     onValueChange = { v -> qty = v.filter { it.isDigit() } },
                     label = { Text("Quantity") },
                     singleLine = true,
+                    trailingIcon = { RescanIcon("quantity") { rescan = FieldReader.Field.QUANTITY } },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.weight(1f),
                 )
@@ -440,9 +497,11 @@ fun ReviewScreen(
             }
 
             Field(
-                (part.distributor ?: "Distributor") + " part number", distributorPn, { distributorPn = it }, mono = true
+                (part.distributor ?: "Distributor") + " part number", distributorPn, { distributorPn = it }, mono = true,
+                onRescan = { rescan = FieldReader.Field.DISTRIBUTOR_PN },
             )
-            Field("Customer / Entrust PN", customerPn, { customerPn = it }, mono = true)
+            Field("Customer / Entrust PN", customerPn, { customerPn = it }, mono = true,
+                onRescan = { rescan = FieldReader.Field.CUSTOMER_PN })
             Field("Notes", notes, { notes = it }, singleLine = false)
 
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -461,6 +520,26 @@ fun ReviewScreen(
             }
             Spacer(Modifier.height(24.dp))
         }
+    }
+
+    rescan?.let { f ->
+        FieldScanDialog(
+            fieldName = FieldReader.label(f),
+            onDismiss = { rescan = null },
+            onRead = { lines ->
+                rescan = null
+                applyRescan(f, lines)
+            },
+        )
+    }
+    if (showPhoto && photo != null) PhotoViewer(photo) { showPhoto = false }
+}
+
+/** Small camera button in a field: re-read just this field from a close-up photo. */
+@Composable
+private fun RescanIcon(name: String, onClick: () -> Unit) {
+    IconButton(onClick = onClick) {
+        Icon(Icons.Outlined.CameraAlt, contentDescription = "Rescan $name", modifier = Modifier.size(20.dp))
     }
 }
 
@@ -560,6 +639,7 @@ private fun Field(
     singleLine: Boolean = true,
     mono: Boolean = false,
     hint: String? = null,
+    onRescan: (() -> Unit)? = null,
 ) {
     OutlinedTextField(
         value = value,
@@ -570,6 +650,11 @@ private fun Field(
         else MaterialTheme.typography.bodyLarge,
         supportingText = if (hint != null) {
             { Text(hint) }
+        } else {
+            null
+        },
+        trailingIcon = if (onRescan != null) {
+            { RescanIcon(label.lowercase(), onRescan) }
         } else {
             null
         },

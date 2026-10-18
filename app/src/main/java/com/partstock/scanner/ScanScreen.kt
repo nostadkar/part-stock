@@ -2,6 +2,7 @@ package com.partstock.scanner
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -82,8 +83,11 @@ fun ScanScreen(
     partCount: Int,
     onInventory: () -> Unit,
     onSettings: () -> Unit,
-    /** One list of OCR lines per photo. The camera sends a short burst; a picked photo sends one. */
-    onFrames: (List<List<OcrLine>>) -> Unit,
+    /**
+     * One list of OCR lines per photo (the camera sends a short burst; a picked photo sends one), plus one of the
+     * photos so the review screen can show what was read.
+     */
+    onFrames: (List<List<OcrLine>>, Bitmap?) -> Unit,
     onError: (String) -> Unit,
 ) {
     val context = LocalContext.current
@@ -115,7 +119,8 @@ fun ScanScreen(
             busy = true
             scope.launch {
                 try {
-                    onFrames(listOf(OcrEngine.recognize(InputImage.fromFilePath(context, uri))))
+                    val lines = OcrEngine.recognize(InputImage.fromFilePath(context, uri))
+                    onFrames(listOf(lines), loadPhoto(context, uri))
                 } catch (e: Exception) {
                     onError("Couldn't read photo: ${e.message}")
                 } finally {
@@ -135,11 +140,15 @@ fun ScanScreen(
                 if (cam != null && view != null) focusAt(cam, view, view.width / 2f, view.height / 2f)
                 // Read a short burst and let the frames vote on each field, so one slip doesn't stick.
                 val frames = mutableListOf<List<OcrLine>>()
+                var photo: Bitmap? = null
                 for (i in 1..BURST_FRAMES) {
                     progress = "Reading $i/$BURST_FRAMES… hold still"
-                    frames.add(captureAndRead(imageCapture, context))
+                    // Keep the last photo of the burst for the review screen.
+                    val f = captureAndRead(imageCapture, context, keepPhoto = i == BURST_FRAMES)
+                    frames.add(f.lines)
+                    if (f.photo != null) photo = f.photo
                 }
-                onFrames(frames)
+                onFrames(frames, photo)
             } catch (e: Exception) {
                 onError("Capture failed: ${e.message}")
             } finally {
@@ -265,50 +274,3 @@ fun ScanScreen(
 
 private const val BURST_FRAMES = 3
 
-/** Focuses and meters on a point of the preview; gives up quietly after a moment. */
-private suspend fun focusAt(camera: Camera, view: PreviewView, x: Float, y: Float) {
-    val point = view.meteringPointFactory.createPoint(x, y)
-    val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
-        .setAutoCancelDuration(4, TimeUnit.SECONDS)
-        .build()
-    try {
-        withTimeoutOrNull(1500) { camera.cameraControl.startFocusAndMetering(action).awaitResult() }
-    } catch (e: Exception) {
-        // Focus not supported or cancelled by a newer request: capture anyway.
-    }
-}
-
-private suspend fun <T> ListenableFuture<T>.awaitResult(): T = suspendCancellableCoroutine { cont ->
-    addListener({
-        try {
-            cont.resume(get())
-        } catch (e: Exception) {
-            cont.resumeWithException(e)
-        }
-    }, Runnable::run)
-}
-
-/** Takes one photo and runs OCR on it. */
-@androidx.annotation.OptIn(ExperimentalGetImage::class)
-private suspend fun captureAndRead(imageCapture: ImageCapture, context: android.content.Context): List<OcrLine> {
-    val proxy = suspendCancellableCoroutine<ImageProxy> { cont ->
-        imageCapture.takePicture(
-            ContextCompat.getMainExecutor(context),
-            object : ImageCapture.OnImageCapturedCallback() {
-                override fun onCaptureSuccess(image: ImageProxy) {
-                    if (cont.isActive) cont.resume(image) else image.close()
-                }
-
-                override fun onError(exception: ImageCaptureException) {
-                    cont.resumeWithException(exception)
-                }
-            },
-        )
-    }
-    try {
-        val media = proxy.image ?: error("Camera returned no image")
-        return OcrEngine.recognize(InputImage.fromMediaImage(media, proxy.imageInfo.rotationDegrees))
-    } finally {
-        proxy.close()
-    }
-}

@@ -83,6 +83,10 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   The foil bags glare: tilt the bag a little rather than using the light.
 - The review screen shows what it read and whether the part is already in stock
   ("Already in stock: 500 · after save: 529").
+- **Fix one field without rescanning**: the review screen shows the photo that was read (tap to zoom, pinch, double-tap)
+  so you can compare. Each of MPN, description, quantity, distributor PN and customer PN has a small camera icon: frame
+  just that part of the label in the box and tap the shutter. Only the text inside the box is used, cleaned like a
+  full scan (field names dropped, split part numbers joined, O/0 slips in quantities fixed), and only that field changes.
 - **Add to stock** adds the quantity; **Set count to this** overwrites it (use after a recount).
 - **Bin / location** is remembered for the next scan, handy when filling one drawer at a time.
 - Entrust kit labels print a per-board quantity (Qty 29) and a kit count (Qty 15). The app pre-fills the

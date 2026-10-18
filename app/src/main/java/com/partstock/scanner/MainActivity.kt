@@ -1,5 +1,6 @@
 package com.partstock.scanner
 
+import android.graphics.Bitmap
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
@@ -41,7 +42,8 @@ class MainActivity : ComponentActivity() {
 
 private sealed interface Screen {
     data object Scan : Screen
-    data class Review(val part: ParsedPart) : Screen
+    /** [photo] is one of the photos that was read, shown on the review screen to compare against. */
+    data class Review(val part: ParsedPart, val photo: Bitmap? = null) : Screen
     data object Inventory : Screen
     data object Settings : Screen
 }
@@ -73,10 +75,10 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
             partCount = partCount,
             onInventory = { screen = Screen.Inventory },
             onSettings = { screen = Screen.Settings },
-            onFrames = { frames ->
+            onFrames = { frames, photo ->
                 val part = ScanMerger.merge(frames.map { LabelParser.parse(it) })
                 if (part.rawText.isBlank()) toast("No text found. Move closer and avoid glare.")
-                else screen = Screen.Review(part)
+                else screen = Screen.Review(part, photo)
             },
             onError = ::toast,
         )
@@ -85,6 +87,7 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
             BackHandler { screen = Screen.Scan }
             ReviewScreen(
                 part = s.part,
+                photo = s.photo,
                 db = db,
                 prefs = prefs,
                 secrets = secrets,
