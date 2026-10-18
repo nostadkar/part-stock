@@ -71,6 +71,11 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   per-board number and offers the product; count the bag if you're not sure which applies.
 - **Inventory** (top right on the scan screen) lists everything with search. Tap a part to change the
   quantity, bin or description, or delete it.
+- **Using parts**: in a part's edit dialog, set *Use* with − / + and Save; the count drops and the scan log gets a
+  negative "use" entry. **Build kit** (wrench icon on the Inventory screen): pick a kit, enter the number of boards,
+  check the list (parts that would go below 0 are flagged), then *Use parts* subtracts per board × boards from every
+  part. Kits are learned when you save a bag with its Entrust kit label (kit, per-board Qty and REF DES are stored).
+  Counts never go below 0; you're asked to confirm first.
 - **Export** (share icon on the Inventory screen): share or save the inventory CSV, or the scan log CSV
   (every save with the raw OCR text). The CSV opens directly in Google Sheets or Excel.
 - **Backup & restore** (Settings): *Restore from CSV* loads an inventory CSV exported by the app (older exports

@@ -52,6 +52,8 @@ public final class ScanMerger {
         out.quantity = vote(same, p -> p.quantity, best.quantity);
         out.kitQuantity = vote(same, p -> p.kitQuantity, best.kitQuantity);
         out.kitPerBoard = vote(same, p -> p.kitPerBoard, best.kitPerBoard);
+        out.kitName = vote(same, p -> p.kitName, best.kitName);
+        out.kitItem = vote(same, p -> p.kitItem, best.kitItem);
         out.dateCode = vote(same, p -> p.dateCode, best.dateCode);
         out.purchaseOrder = vote(same, p -> p.purchaseOrder, best.purchaseOrder);
         out.lineItem = vote(same, p -> p.lineItem, best.lineItem);

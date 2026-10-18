@@ -9,6 +9,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
@@ -17,6 +20,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
@@ -59,6 +65,7 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
     var editing by remember { mutableStateOf<PartRow?>(null) }
     var pendingCsv by remember { mutableStateOf("") }
     var bucket by remember { mutableStateOf<String?>(null) } // null = all categories
+    var buildingKit by remember { mutableStateOf(false) }
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
 
@@ -98,6 +105,7 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
                 },
                 actions = {
+                    IconButton(onClick = { buildingKit = true }) { Icon(Icons.Filled.Build, contentDescription = "Build kit") }
                     IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.Share, contentDescription = "Export") }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(text = { Text("Share inventory CSV") }, onClick = {
@@ -210,8 +218,12 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
         EditDialog(
             part = p,
             onDismiss = { editing = null },
-            onSave = { q, loc, desc, cost, cat ->
+            onSave = { q, loc, desc, cost, cat, use ->
                 db.update(p.id, q, loc, desc, cost, cat)
+                if (use > 0) {
+                    val left = db.use(p.id, use)
+                    toast("Used $use · $left left")
+                }
                 editing = null
                 version++
             },
@@ -223,13 +235,130 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
             },
         )
     }
+
+    if (buildingKit) {
+        BuildKitDialog(
+            db = db,
+            onDismiss = { buildingKit = false },
+            onBuilt = { msg ->
+                buildingKit = false
+                version++
+                toast(msg)
+            },
+        )
+    }
+}
+
+/** Pick a kit, enter how many boards, check the list, then subtract everything at once. */
+@Composable
+private fun BuildKitDialog(db: InventoryDb, onDismiss: () -> Unit, onBuilt: (String) -> Unit) {
+    val kits = remember { db.kits() }
+    var kit by remember { mutableStateOf(kits.firstOrNull()?.kit) }
+    var boardsText by remember { mutableStateOf("1") }
+    var confirmShort by remember { mutableStateOf(false) }
+    val boards = boardsText.toIntOrNull() ?: 0
+    val plan = remember(kit, boards) { kit?.let { if (boards > 0) db.kitPlan(it, boards) else emptyList() }.orEmpty() }
+    val short = plan.filter { it.after < 0 }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Build kit") },
+        text = {
+            if (kits.isEmpty()) {
+                Text(
+                    "No kits yet. Save a bag with its Entrust kit label and the app remembers which kit it belongs to, " +
+                        "how many go on each board and the ref des.",
+                )
+            } else Column(
+                Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                kits.forEach { k ->
+                    FilterChip(
+                        selected = kit == k.kit,
+                        onClick = {
+                            kit = k.kit
+                            confirmShort = false
+                        },
+                        label = {
+                            Text("${k.kit} · ${k.parts} part${if (k.parts == 1) "" else "s"}" +
+                                (k.kitQuantity?.let { " · label qty $it" } ?: ""))
+                        },
+                    )
+                }
+                OutlinedTextField(
+                    boardsText,
+                    { v ->
+                        boardsText = v.filter { it.isDigit() }.take(5)
+                        confirmShort = false
+                    },
+                    label = { Text("Boards") }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+                plan.forEach { line ->
+                    val p = line.part
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                p.mpn.ifBlank { p.customerPn.ifBlank { p.distributorPn } },
+                                fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                "${line.perBoard} × $boards = ${line.need}" +
+                                    (if (line.refDes.isNotBlank()) " · ${line.refDes}" else ""),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                            )
+                        }
+                        Text(
+                            "${p.quantity} → ${line.after}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (line.after < 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(start = 8.dp),
+                        )
+                    }
+                }
+                if (short.isNotEmpty()) {
+                    Text(
+                        "${short.size} part${if (short.size == 1) "" else "s"} would go below 0; " +
+                            "they'll be set to 0. Recount those bags.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            if (kits.isNotEmpty()) {
+                TextButton(
+                    enabled = kit != null && boards > 0 && plan.isNotEmpty(),
+                    onClick = {
+                        val k = kit
+                        if (k != null) {
+                            if (short.isNotEmpty() && !confirmShort) {
+                                confirmShort = true
+                            } else {
+                                db.buildKit(k, boards)
+                                onBuilt("Used parts for $boards board${if (boards == 1) "" else "s"} of $k")
+                            }
+                        }
+                    },
+                ) {
+                    Text(if (confirmShort) "Tap again to use anyway" else "Use parts")
+                }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(if (kits.isEmpty()) "OK" else "Cancel") } },
+    )
 }
 
 @Composable
 private fun EditDialog(
     part: PartRow,
     onDismiss: () -> Unit,
-    onSave: (Int, String, String, Double?, String) -> Unit,
+    onSave: (Int, String, String, Double?, String, Int) -> Unit,
     onDelete: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -239,7 +368,10 @@ private fun EditDialog(
     var cost by remember { mutableStateOf(part.unitCost?.let { InventoryDb.fmtCost(it) }.orEmpty()) }
     var category by remember { mutableStateOf(part.category) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var use by remember { mutableIntStateOf(0) }
+    var confirmUse by remember { mutableStateOf(false) }
     val link = part.link()
+    val stock = qty.toIntOrNull() ?: part.quantity
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -260,6 +392,34 @@ private fun EditDialog(
                     qty, { v -> qty = v.filter { it.isDigit() } }, label = { Text("Quantity") }, singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Use", modifier = Modifier.width(40.dp))
+                    IconButton(onClick = {
+                        use = maxOf(0, use - 1)
+                        confirmUse = false
+                    }) { Icon(Icons.Filled.Remove, contentDescription = "Use fewer") }
+                    OutlinedTextField(
+                        if (use == 0) "" else use.toString(),
+                        { v ->
+                            use = v.filter { it.isDigit() }.take(6).toIntOrNull() ?: 0
+                            confirmUse = false
+                        },
+                        placeholder = { Text("0") }, singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.width(88.dp),
+                    )
+                    IconButton(onClick = {
+                        use += 1
+                        confirmUse = false
+                    }) { Icon(Icons.Filled.Add, contentDescription = "Use more") }
+                }
+                if (use > 0) {
+                    Text(
+                        if (use > stock) "Only $stock in stock; saving sets it to 0." else "After use: ${stock - use}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (use > stock) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 OutlinedTextField(
                     cost, { v -> cost = v.filter { it.isDigit() || it == '.' } }, label = { Text("Unit cost (each)") },
                     singleLine = true, prefix = { Text("$") },
@@ -272,8 +432,9 @@ private fun EditDialog(
         },
         confirmButton = {
             TextButton(onClick = {
-                onSave(qty.toIntOrNull() ?: part.quantity, location, description, cost.toDoubleOrNull(), category)
-            }) { Text("Save") }
+                if (use > stock && !confirmUse) confirmUse = true
+                else onSave(stock, location, description, cost.toDoubleOrNull(), category, use)
+            }) { Text(if (confirmUse) "Tap again to save" else "Save") }
         },
         dismissButton = {
             TextButton(onClick = { if (confirmDelete) onDelete() else confirmDelete = true }) {

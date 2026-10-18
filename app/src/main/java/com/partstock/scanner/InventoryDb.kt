@@ -64,7 +64,20 @@ data class ScanEntry(
     val descriptionFromMouser: Boolean = false,
     /** Identifies the physical bag (see ParsedPart.bagFingerprint); blank when the label can't. */
     val bagFingerprint: String = "",
+    /** Entrust kit label on the bag: kit header, per-board qty and ref des, stored as kit membership. */
+    val kitName: String = "",
+    val kitPerBoard: Int? = null,
+    val kitQuantity: Int? = null,
+    val kitItem: Int? = null,
 )
+
+/** A kit with parts registered from scanned Entrust kit labels. */
+data class KitSummary(val kit: String, val parts: Int, val kitQuantity: Int?)
+
+/** One part of a kit build: [need] = per board × boards. */
+data class KitLine(val part: PartRow, val perBoard: Int, val refDes: String, val need: Int) {
+    val after: Int get() = part.quantity - need
+}
 
 /** An earlier save of the same bag. */
 data class BagHit(val timestamp: String, val quantity: Int, val mode: String)
@@ -73,7 +86,7 @@ data class BagHit(val timestamp: String, val quantity: Int, val mode: String)
 data class ImportSummary(val rows: Int, val added: Int, val updated: Int, val removed: Int)
 
 /** Inventory stored on the phone: one row per part, plus a log of every save. */
-class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 4) {
+class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 5) {
 
     /** Called after every change to the parts table (used for auto backup). */
     @Volatile var onChanged: (() -> Unit)? = null
@@ -99,6 +112,16 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                 distributor_pn TEXT, customer_pn TEXT, raw TEXT, bag_fp TEXT NOT NULL DEFAULT '')"""
         )
         db.execSQL("CREATE INDEX IF NOT EXISTS scan_log_bag_fp ON scan_log(bag_fp)")
+        createKitItems(db)
+    }
+
+    private fun createKitItems(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS kit_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, kit TEXT NOT NULL, part_id INTEGER NOT NULL,
+                per_board INTEGER NOT NULL, ref_des TEXT NOT NULL DEFAULT '', item INTEGER, kit_qty INTEGER,
+                updated_at TEXT NOT NULL DEFAULT '', UNIQUE(kit, part_id))"""
+        )
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -120,6 +143,10 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             // Adds a column and an index only; earlier scans have no fingerprint and never warn.
             db.execSQL("ALTER TABLE scan_log ADD COLUMN bag_fp TEXT NOT NULL DEFAULT ''")
             db.execSQL("CREATE INDEX IF NOT EXISTS scan_log_bag_fp ON scan_log(bag_fp)")
+        }
+        if (oldVersion < 5) {
+            // New table only; nothing existing is touched. Kits fill in as kit labels are scanned.
+            createKitItems(db)
         }
     }
 
@@ -152,6 +179,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             val now = now()
             val hit = find(e.mpn, e.customerPn, e.distributorPn)
             val total: Int
+            val partId: Long
             if (hit != null) {
                 val r = hit.row
                 total = if (e.addMode) r.quantity + e.quantity else e.quantity
@@ -178,9 +206,10 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                     put("updated_at", now)
                 }
                 db.update("parts", v, "id = ?", arrayOf(r.id.toString()))
+                partId = r.id
             } else {
                 total = e.quantity
-                db.insert("parts", null, ContentValues().apply {
+                partId = db.insert("parts", null, ContentValues().apply {
                     put("mpn", e.mpn); put("description", e.description); put("manufacturer", e.manufacturer)
                     put("quantity", e.quantity); put("location", e.location); put("distributor", e.distributor)
                     put("distributor_pn", e.distributorPn); put("customer_pn", e.customerPn)
@@ -198,6 +227,14 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                 put("source", e.source); put("distributor_pn", e.distributorPn)
                 put("customer_pn", e.customerPn); put("raw", e.raw); put("bag_fp", e.bagFingerprint)
             })
+            if (e.kitName.isNotBlank() && e.kitPerBoard != null && e.kitPerBoard > 0 && partId > 0) {
+                db.insertWithOnConflict("kit_items", null, ContentValues().apply {
+                    put("kit", e.kitName.trim()); put("part_id", partId); put("per_board", e.kitPerBoard)
+                    put("ref_des", e.refDes); put("updated_at", now)
+                    if (e.kitItem != null) put("item", e.kitItem)
+                    if (e.kitQuantity != null) put("kit_qty", e.kitQuantity)
+                }, SQLiteDatabase.CONFLICT_REPLACE)
+            }
             db.setTransactionSuccessful()
             return total
         } finally {
@@ -295,7 +332,83 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
 
     fun delete(id: Long) {
         writableDatabase.delete("parts", "id = ?", arrayOf(id.toString()))
+        writableDatabase.delete("kit_items", "part_id = ?", arrayOf(id.toString()))
         onChanged?.invoke()
+    }
+
+    /**
+     * Takes [qty] pieces out of stock and logs a negative "use" entry. The count stops at 0 (callers confirm that
+     * with the user first). Returns the new quantity, or null if the part is gone.
+     */
+    fun use(id: Long, qty: Int, note: String = "Used"): Int? {
+        val db = writableDatabase
+        db.beginTransaction()
+        val total = try {
+            useTx(db, id, qty, note, now()).also { db.setTransactionSuccessful() }
+        } finally {
+            db.endTransaction()
+        }
+        onChanged?.invoke()
+        return total
+    }
+
+    private fun useTx(db: SQLiteDatabase, id: Long, qty: Int, note: String, now: String): Int? {
+        val r = db.rawQuery("SELECT * FROM parts WHERE id = ?", arrayOf(id.toString())).use { c ->
+            if (c.moveToFirst()) c.toRow() else null
+        } ?: return null
+        val total = maxOf(0, r.quantity - qty)
+        db.update("parts", ContentValues().apply {
+            put("quantity", total); put("updated_at", now)
+        }, "id = ?", arrayOf(id.toString()))
+        db.insert("scan_log", null, ContentValues().apply {
+            put("ts", now)
+            put("part_key", r.mpn.ifBlank { r.customerPn.ifBlank { r.distributorPn } })
+            put("mode", "use")
+            put("qty", -qty); put("total", total); put("location", r.location)
+            put("source", note); put("distributor_pn", r.distributorPn)
+            put("customer_pn", r.customerPn); put("raw", "")
+        })
+        return total
+    }
+
+    /** Kits registered from scanned kit labels, most recently scanned first. */
+    fun kits(): List<KitSummary> =
+        readableDatabase.rawQuery(
+            "SELECT k.kit, COUNT(*), MAX(k.kit_qty) FROM kit_items k JOIN parts p ON p.id = k.part_id " +
+                "GROUP BY k.kit ORDER BY MAX(k.updated_at) DESC", null
+        ).use { c ->
+            buildList {
+                while (c.moveToNext()) add(KitSummary(c.getString(0), c.getInt(1), if (c.isNull(2)) null else c.getInt(2)))
+            }
+        }
+
+    /** What building [boards] of [kit] takes from stock, part by part. */
+    fun kitPlan(kit: String, boards: Int): List<KitLine> {
+        val members = readableDatabase.rawQuery(
+            "SELECT part_id, per_board, ref_des FROM kit_items WHERE kit = ? ORDER BY item, id", arrayOf(kit)
+        ).use { c -> buildList { while (c.moveToNext()) add(Triple(c.getLong(0), c.getInt(1), c.getString(2).orEmpty())) } }
+        return members.mapNotNull { (id, perBoard, refDes) ->
+            val row = readableDatabase.rawQuery("SELECT * FROM parts WHERE id = ?", arrayOf(id.toString())).use { c ->
+                if (c.moveToFirst()) c.toRow() else null
+            } ?: return@mapNotNull null
+            KitLine(row, perBoard, refDes, perBoard * boards)
+        }
+    }
+
+    /** Subtracts a kit build from stock in one transaction, logging a "use" per part. */
+    fun buildKit(kit: String, boards: Int): List<KitLine> {
+        val plan = kitPlan(kit, boards)
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val now = now()
+            for (line in plan) useTx(db, line.part.id, line.need, "Kit $kit × $boards", now)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        onChanged?.invoke()
+        return plan
     }
 
     fun inventoryCsv(): String {

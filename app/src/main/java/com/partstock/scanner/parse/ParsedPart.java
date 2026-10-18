@@ -25,6 +25,10 @@ public final class ParsedPart {
     public Integer kitQuantity;
     /** Entrust only: pieces of this part per board (the table's Qty cell). */
     public Integer kitPerBoard;
+    /** Entrust only: the kit header without its Qty ("260699 Entrust SH 536966-001 Rev 1"). */
+    public String kitName;
+    /** Entrust only: the line's item number in the kit. */
+    public Integer kitItem;
     public String dateCode;
     public String refDes;
     public int refDesCount;

@@ -183,6 +183,8 @@ public final class LabelParser {
             p.kitPerBoard = kit.quantity;
             p.refDes = kit.refDes;
             p.refDesCount = kit.refDesCount;
+            p.kitName = kit.kitName;
+            p.kitItem = kit.kitItem;
             if (kit.customerPn != null) p.customerPn = kit.customerPn;
             if (kit.mpn != null) {
                 p.mpn = kit.mpn;
@@ -417,7 +419,9 @@ public final class LabelParser {
         if (headerText != null) {
             String kit = headerText.replaceAll("(?i)\\s*QTY\\s*[:#]?\\s*[0-9OoIl]+\\s*$", "").trim();
             notes.add("Kit " + kit);
+            p.kitName = kit.replaceAll("\\s+", " ");
         }
+        p.kitItem = item;
         if (item != null) notes.add("item " + item);
         if (!notes.isEmpty()) p.notes = String.join("; ", notes);
     }

@@ -194,6 +194,8 @@ fun ReviewScreen(
                     unitCost = cost, productUrl = link.orEmpty(),
                     category = category, descriptionFromMouser = descriptionFromMouser,
                     bagFingerprint = fingerprint.orEmpty(),
+                    kitName = part.kitName.orEmpty(), kitPerBoard = part.kitPerBoard,
+                    kitQuantity = part.kitQuantity, kitItem = part.kitItem,
                 )
                 val name = mpn.ifBlank { customerPn.ifBlank { distributorPn } }
                 try {

@@ -300,6 +300,22 @@ public class LabelParserTest {
     }
 
     @Test
+    public void kitNameAndItemAreKeptForKitMembership() {
+        ParsedPart k = LabelParser.parse(entrust());
+        assertEquals("230977 Entrust SH 533455-002 Rev A", k.kitName);
+        assertEquals(Integer.valueOf(12), k.kitItem);
+        assertEquals(Integer.valueOf(29), k.kitPerBoard);
+        assertEquals(Integer.valueOf(15), k.kitQuantity);
+
+        ParsedPart m = LabelParser.parse(multiLabelBag());
+        assertEquals("260699 Entrust SH 536966-001 Rev 1", m.kitName);
+        assertEquals(Integer.valueOf(33), m.kitItem);
+        assertEquals(Integer.valueOf(1), m.kitPerBoard);
+
+        assertNull(LabelParser.parse(mouser()).kitName);
+    }
+
+    @Test
     public void myDataStickerAlone() {
         List<OcrLine> l = new Lines()
                 .add("Carrier: 053716", 697, 520, 900, 550)
