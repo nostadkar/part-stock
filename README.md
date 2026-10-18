@@ -73,6 +73,11 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   quantity, bin or description, or delete it.
 - **Export** (share icon on the Inventory screen): share or save the inventory CSV, or the scan log CSV
   (every save with the raw OCR text). The CSV opens directly in Google Sheets or Excel.
+- **Backup & restore** (Settings): *Restore from CSV* loads an inventory CSV exported by the app (older exports
+  without Category / Unit Cost / Link work too). Choose *Merge* (rows are matched like a scan, quantities set from the
+  file, other parts kept) or *Replace everything* (the scan log is kept); a summary like "42 parts: 30 new, 12 updated"
+  is shown before anything changes. *Auto backup* writes the inventory CSV to a folder you pick after every save and
+  keeps the newest 5 files; pick a folder your cloud app syncs to keep a copy off the phone.
 - Scanning both the DigiKey and Entrust label of the **same bag** with "Add" double-counts it. Use "Set" or
   scan one label per bag.
 
@@ -89,6 +94,8 @@ app/src/main/java/com/partstock/scanner/
   ReviewScreen.kt            Edit fields, stock check, save
   InventoryScreen.kt         List, search, edit, delete, export
   InventoryDb.kt             SQLite storage + CSV
+  parse/InventoryCsv.java    CSV read/write for export and restore (pure Java, unit tested)
+  AutoBackup.kt              Writes the inventory CSV to a picked folder after each save
   Export.kt                  Share sheet / save-to-file
 app/src/test/.../LabelParserTest.java
 ```

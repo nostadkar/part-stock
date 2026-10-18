@@ -19,4 +19,14 @@ class Prefs(context: Context) {
     var dismissedBuild: Int
         get() = sp.getInt("dismissedBuild", 0)
         set(v) = sp.edit().putInt("dismissedBuild", v).apply()
+
+    /** Folder (SAF tree URI) for automatic inventory backups; blank = off. */
+    var autoBackupUri: String
+        get() = sp.getString("autoBackupUri", "") ?: ""
+        set(v) = sp.edit().putString("autoBackupUri", v).apply()
+
+    /** Outcome of the last automatic backup, shown in Settings. */
+    var autoBackupStatus: String
+        get() = sp.getString("autoBackupStatus", "") ?: ""
+        set(v) = sp.edit().putString("autoBackupStatus", v).apply()
 }

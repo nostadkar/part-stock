@@ -6,6 +6,7 @@ import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import com.partstock.scanner.parse.Categories
+import com.partstock.scanner.parse.InventoryCsv
 import com.partstock.scanner.parse.Links
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -63,8 +64,14 @@ data class ScanEntry(
     val descriptionFromMouser: Boolean = false,
 )
 
+/** What a CSV restore did (or would do, for a dry run). */
+data class ImportSummary(val rows: Int, val added: Int, val updated: Int, val removed: Int)
+
 /** Inventory stored on the phone: one row per part, plus a log of every save. */
 class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 3) {
+
+    /** Called after every change to the parts table (used for auto backup). */
+    @Volatile var onChanged: (() -> Unit)? = null
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -125,7 +132,9 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
     }
 
     /** Adds or updates the part and logs the scan. Returns the new quantity. */
-    fun save(e: ScanEntry): Int {
+    fun save(e: ScanEntry): Int = saveTx(e).also { onChanged?.invoke() }
+
+    private fun saveTx(e: ScanEntry): Int {
         val db = writableDatabase
         db.beginTransaction()
         try {
@@ -185,6 +194,70 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         }
     }
 
+    /**
+     * Loads parts from an inventory CSV. Replace wipes the parts table first (the scan log is kept); Merge matches each
+     * row like a scan (MPN, then customer PN, then distributor PN), sets the quantity from the file and takes the file's
+     * non-blank fields. With [dryRun] the work is rolled back and only the counts are returned.
+     */
+    fun importRows(rows: List<InventoryCsv.Row>, replace: Boolean, dryRun: Boolean): ImportSummary {
+        val db = writableDatabase
+        var added = 0
+        var updated = 0
+        var removed = 0
+        db.beginTransaction()
+        try {
+            val now = now()
+            if (replace) removed = db.delete("parts", null, null)
+            for (r in rows) {
+                val category = r.category.ifBlank { Categories.classify(r.description, r.notes) }
+                val stamp = r.updatedAt.ifBlank { now }
+                val hit = find(r.mpn, r.customerPn, r.distributorPn)
+                if (hit != null) {
+                    val old = hit.row
+                    db.update("parts", ContentValues().apply {
+                        put("quantity", r.quantity)
+                        take("mpn", r.mpn); take("description", r.description); take("manufacturer", r.manufacturer)
+                        take("location", r.location); take("distributor", r.distributor)
+                        take("distributor_pn", r.distributorPn); take("customer_pn", r.customerPn)
+                        take("product_url", r.link); take("source", r.source); take("notes", r.notes)
+                        take("date_code", r.dateCode); take("ref_des", r.refDes)
+                        if (r.category.isNotBlank()) put("category", r.category)
+                        r.unitCost?.let { put("unit_cost", it) }
+                        put("scans", r.scans ?: old.scans)
+                        put("updated_at", stamp)
+                    }, "id = ?", arrayOf(old.id.toString()))
+                    updated++
+                } else {
+                    db.insert("parts", null, ContentValues().apply {
+                        put("mpn", r.mpn); put("description", r.description); put("manufacturer", r.manufacturer)
+                        put("quantity", r.quantity); put("location", r.location); put("distributor", r.distributor)
+                        put("distributor_pn", r.distributorPn); put("customer_pn", r.customerPn)
+                        put("source", r.source); put("notes", r.notes); put("date_code", r.dateCode)
+                        put("ref_des", r.refDes); put("scans", r.scans ?: 1); put("updated_at", stamp)
+                        put("product_url", r.link); put("category", category)
+                        r.unitCost?.let { put("unit_cost", it) }
+                    })
+                    added++
+                }
+                if (!dryRun) {
+                    db.insert("scan_log", null, ContentValues().apply {
+                        put("ts", now)
+                        put("part_key", r.mpn.ifBlank { r.customerPn.ifBlank { r.distributorPn } })
+                        put("mode", if (replace) "restore" else "import")
+                        put("qty", r.quantity); put("total", r.quantity); put("location", r.location)
+                        put("source", "CSV import"); put("distributor_pn", r.distributorPn)
+                        put("customer_pn", r.customerPn); put("raw", "")
+                    })
+                }
+            }
+            if (!dryRun) db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        if (!dryRun) onChanged?.invoke()
+        return ImportSummary(rows.size, added, updated, removed)
+    }
+
     fun all(): List<PartRow> =
         readableDatabase.rawQuery("SELECT * FROM parts ORDER BY category, UPPER(mpn), UPPER(customer_pn)", null).use { c ->
             buildList { while (c.moveToNext()) add(c.toRow()) }
@@ -197,18 +270,16 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         }
         if (unitCost != null) v.put("unit_cost", unitCost) else v.putNull("unit_cost")
         writableDatabase.update("parts", v, "id = ?", arrayOf(id.toString()))
+        onChanged?.invoke()
     }
 
     fun delete(id: Long) {
         writableDatabase.delete("parts", "id = ?", arrayOf(id.toString()))
+        onChanged?.invoke()
     }
 
     fun inventoryCsv(): String {
-        val header = listOf(
-            "Category", "MPN", "Description", "Manufacturer", "Quantity", "Unit Cost", "Total Value", "Location",
-            "Distributor", "Distributor PN", "Customer PN", "Link", "Source", "Notes", "Date Code", "Ref Des",
-            "Scans", "Last Updated",
-        )
+        val header = InventoryCsv.HEADER
         val rows = all().map {
             listOf(
                 it.category, it.mpn, it.description, it.manufacturer, it.quantity.toString(),
@@ -233,6 +304,10 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             buildList { while (c.moveToNext()) add((0 until 10).map { c.getString(it).orEmpty() }) }
         }
         return csv(header, rows)
+    }
+
+    private fun ContentValues.take(column: String, new: String) {
+        if (new.isNotBlank()) put(column, new)
     }
 
     private fun ContentValues.fill(column: String, current: String, new: String) {
@@ -282,12 +357,6 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         fun fmtMoney(d: Double): String = String.format(Locale.US, "%.2f", d)
 
         /** RFC 4180 CSV; imports cleanly into Google Sheets and Excel. */
-        fun csv(header: List<String>, rows: List<List<String>>): String {
-            fun cell(s: String): String =
-                if (s.any { it == ',' || it == '"' || it == '\n' || it == '\r' }) "\"" + s.replace("\"", "\"\"") + "\"" else s
-            val sb = StringBuilder()
-            (listOf(header) + rows).forEach { r -> sb.append(r.joinToString(",") { cell(it) }).append("\r\n") }
-            return sb.toString()
-        }
+        fun csv(header: List<String>, rows: List<List<String>>): String = InventoryCsv.write(header, rows)
     }
 }

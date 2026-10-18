@@ -32,6 +32,7 @@ class MainActivity : ComponentActivity() {
         val prefs = Prefs(this)
         val db = InventoryDb(applicationContext)
         val secrets = SecretStore(applicationContext)
+        db.onChanged = { AutoBackup.schedule(applicationContext, prefs, db) }
         setContent {
             PartStockTheme { App(prefs, db, secrets) }
         }
@@ -97,8 +98,14 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
         }
 
         Screen.Settings -> {
-            BackHandler { screen = Screen.Scan }
-            SettingsScreen(secrets = secrets, onDone = { screen = Screen.Scan })
+            BackHandler {
+                partCount = db.all().size
+                screen = Screen.Scan
+            }
+            SettingsScreen(secrets = secrets, db = db, prefs = prefs, onDone = {
+                partCount = db.all().size
+                screen = Screen.Scan
+            })
         }
 
         Screen.Inventory -> {
