@@ -127,6 +127,13 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   of boards to see what's short and how many to order (rounded up like the reorder list), and share or save that as
   the reorder CSV. *Build N* subtracts per board × N from every matched part (never below 0, confirm first). Deleting
   a project leaves stock alone.
+- **Undo and history**: after every save (scan, edit, use, move, delete, kit or project build, order import) a bar
+  at the bottom offers *Undo* for about 10 seconds; it puts the part(s) back exactly as they were (bins and kit
+  membership included). A deleted part comes back with Undo too. *History* in a part's dialog lists every change with
+  its date, old → new quantity and what else changed (bin, price, description…); saves from before this feature are
+  shown from the scan log. Undo works for changes up to 30 days old (older "before" copies are dropped to keep the
+  database small; the history lines stay). Undone scans stay in the scan log marked "undone", so the duplicate-bag
+  check ignores them. A CSV restore isn't recorded in the history (use a backup file to go back).
 - **QR labels**: *Label* in a part's dialog, *Make QR labels for the shown parts…* in the Inventory share menu (filter
   by category or bin first), or the QR icon next to a bin on the Locations screen (a bin label, or labels for all its
   parts). Pick 62 × 29 mm (Brother DK), 2 × 1 in thermal, or a Letter sheet of 30 (Avery 5160), then *Share* the PDF to
@@ -177,6 +184,8 @@ app/src/main/java/com/partstock/scanner/
   InventoryScreen.kt         List, search, edit, move between bins, delete, export
   LocationsScreen.kt         Bins with part / piece counts, rename everywhere
   Labels.kt                  QR label PDFs (PdfDocument + ZXing encoder), share / print
+  UndoOffer.kt               Undo snackbar after saves
+  parse/ChangeSummary.java   "What changed" line for the part history (pure Java, unit tested)
   parse/LabelCodes.java      QR label payloads PS:P:<id> / PS:L:<bin> (pure Java, unit tested)
   parse/Locations.java       Stock per bin: add, set, use, move, rename, CSV column (pure Java, unit tested)
   InventoryDb.kt             SQLite storage + CSV

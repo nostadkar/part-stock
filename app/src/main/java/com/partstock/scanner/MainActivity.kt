@@ -9,6 +9,22 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.key
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -62,6 +78,31 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
 
+    // Undo snackbar after any save; an undo reloads the current screen.
+    val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    var dataVersion by remember { mutableIntStateOf(0) }
+    DisposableEffect(Unit) {
+        UndoOffer.show = { msg, group ->
+            scope.launch {
+                snackbar.currentSnackbarData?.dismiss()
+                val undoable = db.canUndo(group)
+                val r = snackbar.showSnackbar(
+                    msg, actionLabel = if (undoable) "Undo" else null, withDismissAction = !undoable,
+                    duration = if (undoable) SnackbarDuration.Long else SnackbarDuration.Short,
+                )
+                if (r == SnackbarResult.ActionPerformed) {
+                    val n = db.undo(group)
+                    partCount = db.all().size
+                    (screen as? Screen.Inventory)?.let { if (it.openPart != null) screen = it.copy(openPart = null) }
+                    dataVersion++
+                    snackbar.showSnackbar(if (n > 0) "Undone" else "Couldn't undo that any more", duration = SnackbarDuration.Short)
+                }
+            }
+        }
+        onDispose { UndoOffer.show = null }
+    }
+
     // Look for a newer build on GitHub at launch (quietly; offline is fine).
     var update by remember { mutableStateOf<Updater.Release?>(null) }
     LaunchedEffect(Unit) { update = Updater.autoCheck(context, prefs) }
@@ -76,6 +117,8 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
         )
     }
 
+    Box(Modifier.fillMaxSize()) {
+    key(dataVersion) {
     when (val s = screen) {
         Screen.Scan -> ScanScreen(
             partCount = partCount,
@@ -111,7 +154,7 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
                 prefs = prefs,
                 secrets = secrets,
                 onSaved = { msg ->
-                    toast(msg)
+                    UndoOffer.offer(context, msg, db.lastChange)
                     partCount = db.all().size
                     screen = Screen.Scan
                 },
@@ -164,6 +207,12 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
             BackHandler { screen = Screen.Inventory() }
             ProjectsScreen(db = db, onBack = { screen = Screen.Inventory() })
         }
+    }
+    }
+    SnackbarHost(
+        snackbar,
+        Modifier.align(Alignment.BottomCenter).navigationBarsPadding().imePadding().padding(bottom = 8.dp),
+    )
     }
 }
 

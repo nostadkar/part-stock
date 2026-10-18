@@ -8,6 +8,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import com.partstock.scanner.parse.BomCsv
 import com.partstock.scanner.parse.BuildPlan
 import com.partstock.scanner.parse.Categories
+import com.partstock.scanner.parse.ChangeSummary
 import com.partstock.scanner.parse.InventoryCsv
 import com.partstock.scanner.parse.Links
 import com.partstock.scanner.parse.Locations
@@ -18,6 +19,8 @@ import java.math.RoundingMode
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import org.json.JSONArray
+import org.json.JSONObject
 
 data class PartRow(
     val id: Long,
@@ -165,14 +168,36 @@ data class ProjectLine(
 /** A storage location with how many different parts and pieces it holds. */
 data class LocationSummary(val name: String, val parts: Int, val pieces: Int)
 
+/**
+ * One line of a part's History. [group] is what [InventoryDb.undo] takes; [legacy] entries come from the scan log of
+ * saves made before history existed (no undo, quantity before only when it can be worked out).
+ */
+data class HistoryEntry(
+    val ts: String,
+    val action: String,
+    val qtyBefore: Int?,
+    val qtyAfter: Int?,
+    val summary: String,
+    val group: Long = 0,
+    val undone: Boolean = false,
+    val legacy: Boolean = false,
+)
+
 /** What a CSV restore did (or would do, for a dry run). */
 data class ImportSummary(val rows: Int, val added: Int, val updated: Int, val removed: Int)
 
 /** Inventory stored on the phone: one row per part, plus a log of every save. */
-class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 10) {
+class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 11) {
 
     /** Called after every change to the parts table (used for auto backup). */
     @Volatile var onChanged: (() -> Unit)? = null
+
+    /** Change group of the latest recorded change, for the Undo snackbar ([undo]); 0 = none yet. */
+    @Volatile var lastChange: Long = 0
+        private set
+
+    /** Set while [grouped] runs: every change recorded meanwhile undoes together. */
+    @Volatile private var openGroup: Long = 0
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -202,6 +227,37 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         createKitItems(db)
         createProjects(db)
         createStock(db)
+        createHistory(db, 0)
+    }
+
+    /**
+     * Change history (one row per part per change, with the part as it was before so it can be undone) and a small
+     * key/value table. [legacyLogId]: scan log rows up to this id are shown as history from before it existed.
+     */
+    private fun createHistory(db: SQLiteDatabase, legacyLogId: Long) {
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS part_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, grp INTEGER NOT NULL, part_id INTEGER NOT NULL,
+                ts TEXT NOT NULL DEFAULT '', action TEXT NOT NULL DEFAULT '', qty_before INTEGER, qty_after INTEGER,
+                summary TEXT NOT NULL DEFAULT '', snapshot TEXT NOT NULL DEFAULT '', log_id INTEGER,
+                undone INTEGER NOT NULL DEFAULT 0)"""
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS part_history_part ON part_history(part_id)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS part_history_grp ON part_history(grp)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')")
+        db.execSQL("INSERT OR IGNORE INTO meta (key, value) VALUES ('legacy_log_id', ?)", arrayOf(legacyLogId.toString()))
+    }
+
+    override fun onOpen(db: SQLiteDatabase) {
+        super.onOpen(db)
+        if (db.isReadOnly) return
+        // Undo is for recent mistakes: snapshots (including deleted parts) are dropped after 30 days; the history
+        // lines themselves stay.
+        val cutoff = LocalDateTime.now().minusDays(SNAPSHOT_DAYS).format(STAMP)
+        db.execSQL(
+            "UPDATE part_history SET snapshot = ? WHERE ts < ? AND snapshot NOT IN ('', ?)",
+            arrayOf(PURGED, cutoff, PURGED),
+        )
     }
 
     /** Pieces per part per bin. parts.quantity stays as the total and parts.location as the main bin. */
@@ -307,6 +363,229 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                 arrayOf(Locations.UNASSIGNED),
             )
         }
+        if (oldVersion < 11) {
+            // New tables only (history + meta). The existing scan log is kept and shown as history for older saves.
+            val lastLog = db.rawQuery("SELECT IFNULL(MAX(id), 0) FROM scan_log", null).use { c -> c.moveToFirst(); c.getLong(0) }
+            createHistory(db, lastLog)
+        }
+    }
+
+    // ---------------------------------------------------------------- history and undo
+
+    /** The part row, its bins and kit memberships as JSON, exactly as stored; null if the part doesn't exist. */
+    private fun snapshot(db: SQLiteDatabase, id: Long): JSONObject? {
+        val o = db.rawQuery("SELECT * FROM parts WHERE id = ?", arrayOf(id.toString())).use { c ->
+            if (!c.moveToFirst()) return null
+            JSONObject().apply {
+                for (i in 0 until c.columnCount) {
+                    put(c.getColumnName(i), when (c.getType(i)) {
+                        Cursor.FIELD_TYPE_NULL -> JSONObject.NULL
+                        Cursor.FIELD_TYPE_INTEGER -> c.getLong(i)
+                        Cursor.FIELD_TYPE_FLOAT -> c.getDouble(i)
+                        else -> c.getString(i)
+                    })
+                }
+            }
+        }
+        o.put("_stock", JSONArray().apply { for ((k, v) in stockOf(db, id)) put(JSONArray().put(k).put(v)) })
+        o.put("_kits", db.rawQuery(
+            "SELECT kit, per_board, ref_des, item, kit_qty, updated_at FROM kit_items WHERE part_id = ? ORDER BY id",
+            arrayOf(id.toString()),
+        ).use { c ->
+            JSONArray().apply {
+                while (c.moveToNext()) {
+                    put(JSONObject().apply {
+                        put("kit", c.getString(0)); put("per_board", c.getInt(1)); put("ref_des", c.getString(2).orEmpty())
+                        put("item", if (c.isNull(3)) JSONObject.NULL else c.getInt(3))
+                        put("kit_qty", if (c.isNull(4)) JSONObject.NULL else c.getInt(4))
+                        put("updated_at", c.getString(5).orEmpty())
+                    })
+                }
+            }
+        })
+        return o
+    }
+
+    /** Column → text for [ChangeSummary]; "stock" holds the bins as in the CSV. */
+    private fun flat(o: JSONObject?): Map<String, String>? {
+        if (o == null) return null
+        val m = HashMap<String, String>()
+        for (k in o.keys()) if (!k.startsWith("_")) m[k] = if (o.isNull(k)) "" else o.get(k).toString()
+        val stock = LinkedHashMap<String, Int>()
+        o.optJSONArray("_stock")?.let { a -> for (i in 0 until a.length()) a.getJSONArray(i).let { stock[it.getString(0)] = it.getInt(1) } }
+        m["stock"] = Locations.format(stock)
+        return m
+    }
+
+    private fun newGroup(db: SQLiteDatabase): Long =
+        db.rawQuery("SELECT IFNULL(MAX(grp), 0) + 1 FROM part_history", null).use { c -> c.moveToFirst(); c.getLong(0) }
+
+    /**
+     * Records a change to one part: [before] is the part as it was (null = it didn't exist yet). Call inside the
+     * change's transaction, after the change. Returns the change group.
+     */
+    private fun record(db: SQLiteDatabase, partId: Long, action: String, before: JSONObject?, logId: Long? = null, group: Long = 0): Long {
+        val after = snapshot(db, partId)
+        if (before == null && after == null) return 0
+        val grp = when {
+            group != 0L -> group
+            openGroup != 0L -> openGroup
+            else -> newGroup(db)
+        }
+        db.insert("part_history", null, ContentValues().apply {
+            put("grp", grp); put("part_id", partId); put("ts", now()); put("action", action)
+            if (before != null) put("qty_before", before.optInt("quantity"))
+            if (after != null) put("qty_after", after.optInt("quantity"))
+            put("summary", ChangeSummary.describe(flat(before), flat(after)))
+            put("snapshot", before?.toString() ?: "")
+            if (logId != null && logId > 0) put("log_id", logId)
+        })
+        lastChange = grp
+        return grp
+    }
+
+    /** Runs [block] so that every change it makes is one Undo (e.g. an edit plus a use, or a kit build). */
+    fun <T> grouped(block: () -> T): T {
+        if (openGroup != 0L) return block()
+        openGroup = newGroup(writableDatabase)
+        try {
+            return block()
+        } finally {
+            openGroup = 0
+        }
+    }
+
+    /** True if [group] can still be undone (not undone already, snapshots not purged). */
+    fun canUndo(group: Long): Boolean = group > 0 && readableDatabase.rawQuery(
+        "SELECT COUNT(*), SUM(undone = 0 AND snapshot != ?) FROM part_history WHERE grp = ?", arrayOf(PURGED, group.toString()),
+    ).use { c -> c.moveToFirst() && c.getInt(0) > 0 && c.getInt(0) == c.getInt(1) }
+
+    /**
+     * Puts every part touched by change [group] back exactly as it was (row, bins and kit memberships): a new part is
+     * removed again, a deleted one comes back with the same id. The scan log keeps its lines, marked "undone" so the
+     * duplicate-bag check ignores them. The undo itself is recorded in the history. Returns parts restored.
+     */
+    fun undo(group: Long): Int {
+        if (!canUndo(group)) return 0
+        val db = writableDatabase
+        var n = 0
+        db.beginTransaction()
+        try {
+            data class Rec(val id: Long, val partId: Long, val snap: String, val logId: Long?)
+            val recs = db.rawQuery(
+                "SELECT id, part_id, snapshot, log_id FROM part_history WHERE grp = ? ORDER BY id DESC", arrayOf(group.toString()),
+            ).use { c ->
+                buildList { while (c.moveToNext()) add(Rec(c.getLong(0), c.getLong(1), c.getString(2).orEmpty(), if (c.isNull(3)) null else c.getLong(3))) }
+            }
+            val undoGroup = newGroup(db)
+            for (r in recs) {
+                val before = snapshot(db, r.partId)
+                restore(db, r.partId, r.snap)
+                if (r.logId != null) db.execSQL("UPDATE scan_log SET mode = 'undone' WHERE id = ?", arrayOf(r.logId))
+                db.execSQL("UPDATE part_history SET undone = 1 WHERE id = ?", arrayOf(r.id))
+                record(db, r.partId, "undo", before, group = undoGroup)
+                n++
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        if (n > 0) onChanged?.invoke()
+        return n
+    }
+
+    private fun restore(db: SQLiteDatabase, id: Long, snap: String) {
+        val args = arrayOf(id.toString())
+        db.delete("part_stock", "part_id = ?", args)
+        db.delete("kit_items", "part_id = ?", args)
+        if (snap.isEmpty()) { // the change created the part
+            db.delete("parts", "id = ?", args)
+            return
+        }
+        val o = JSONObject(snap)
+        val v = ContentValues()
+        for (k in o.keys()) {
+            if (k.startsWith("_")) continue
+            when (val x = o.get(k)) {
+                JSONObject.NULL -> v.putNull(k)
+                is Int -> v.put(k, x)
+                is Long -> v.put(k, x)
+                is Double -> v.put(k, x)
+                is Number -> v.put(k, x.toDouble())
+                else -> v.put(k, x.toString())
+            }
+        }
+        v.put("id", id)
+        val exists = db.rawQuery("SELECT 1 FROM parts WHERE id = ?", args).use { it.moveToFirst() }
+        if (exists) db.update("parts", v, "id = ?", args) else db.insert("parts", null, v)
+        o.optJSONArray("_stock")?.let { a ->
+            for (i in 0 until a.length()) {
+                val e = a.getJSONArray(i)
+                db.insert("part_stock", null, ContentValues().apply {
+                    put("part_id", id); put("location", e.getString(0)); put("qty", e.getInt(1))
+                })
+            }
+        }
+        o.optJSONArray("_kits")?.let { a ->
+            for (i in 0 until a.length()) {
+                val k = a.getJSONObject(i)
+                db.insert("kit_items", null, ContentValues().apply {
+                    put("part_id", id); put("kit", k.getString("kit")); put("per_board", k.getInt("per_board"))
+                    put("ref_des", k.optString("ref_des")); put("updated_at", k.optString("updated_at"))
+                    if (!k.isNull("item")) put("item", k.getInt("item"))
+                    if (!k.isNull("kit_qty")) put("kit_qty", k.getInt("kit_qty"))
+                })
+            }
+        }
+    }
+
+    /**
+     * A part's history, newest first: every recorded change, then (for saves from before history existed) the matching
+     * scan log lines.
+     */
+    fun history(part: PartRow): List<HistoryEntry> {
+        val db = readableDatabase
+        val out = db.rawQuery(
+            "SELECT ts, action, qty_before, qty_after, summary, grp, undone FROM part_history WHERE part_id = ? ORDER BY id DESC",
+            arrayOf(part.id.toString()),
+        ).use { c ->
+            buildList {
+                while (c.moveToNext()) add(HistoryEntry(
+                    ts = c.getString(0).orEmpty(), action = c.getString(1).orEmpty(),
+                    qtyBefore = if (c.isNull(2)) null else c.getInt(2), qtyAfter = if (c.isNull(3)) null else c.getInt(3),
+                    summary = c.getString(4).orEmpty(), group = c.getLong(5), undone = c.getInt(6) != 0,
+                ))
+            }
+        }.toMutableList()
+        val cutoff = db.rawQuery("SELECT value FROM meta WHERE key = 'legacy_log_id'", null).use { c ->
+            if (c.moveToFirst()) c.getString(0).toLongOrNull() ?: 0 else 0
+        }
+        val keys = listOf(part.mpn, part.customerPn, part.distributorPn).map { norm(it) }.filter { it.isNotEmpty() }.distinct()
+        if (cutoff > 0 && keys.isNotEmpty()) {
+            val marks = keys.joinToString(",") { "?" }
+            db.rawQuery(
+                "SELECT ts, mode, qty, total, location, source FROM scan_log " +
+                    "WHERE id <= ? AND UPPER(REPLACE(part_key, ' ', '')) IN ($marks) ORDER BY id DESC",
+                arrayOf(cutoff.toString()) + keys,
+            ).use { c ->
+                while (c.moveToNext()) {
+                    val mode = c.getString(1).orEmpty()
+                    val qty = c.getInt(2)
+                    val total = c.getInt(3)
+                    val detail = listOf(
+                        if (mode == "use") "used ${-qty}" else "qty $qty",
+                        c.getString(4).orEmpty().let { if (it.isNotBlank()) "bin $it" else "" },
+                        c.getString(5).orEmpty(),
+                    ).filter { it.isNotBlank() }.joinToString(" · ")
+                    out += HistoryEntry(
+                        ts = c.getString(0).orEmpty(), action = mode,
+                        qtyBefore = if (mode == "add" || mode == "use") total - qty else null, qtyAfter = total,
+                        summary = detail, legacy = true,
+                    )
+                }
+            }
+        }
+        return out
     }
 
     // ---------------------------------------------------------------- stock per location
@@ -355,6 +634,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         db.beginTransaction()
         val moved = try {
             val r = byId(id) ?: return null
+            val snap = snapshot(db, id)
             val before = stockOrLegacy(db, r)
             val n = minOf(maxOf(0, qty), Locations.qtyIn(before, from))
             if (n == 0 || Locations.same(from, to)) return 0
@@ -365,12 +645,13 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             val total = writeStock(db, id, after, primary)
             db.update("parts", ContentValues().apply { put("location", primary); put("updated_at", now) },
                 "id = ?", arrayOf(id.toString()))
-            db.insert("scan_log", null, ContentValues().apply {
+            val logId = db.insert("scan_log", null, ContentValues().apply {
                 put("ts", now); put("part_key", r.key()); put("mode", "move")
                 put("qty", n); put("total", total); put("location", "${Locations.normalize(from)} → ${Locations.normalize(to)}")
                 put("source", "Move"); put("distributor_pn", r.distributorPn)
                 put("customer_pn", r.customerPn); put("raw", "")
             })
+            record(db, id, "move", snap, logId)
             db.setTransactionSuccessful()
             n
         } finally {
@@ -386,6 +667,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         if (Locations.normalize(from) == target) return 0
         val db = writableDatabase
         var changed = 0
+        val group = newGroup(db)
         db.beginTransaction()
         try {
             val ids = db.rawQuery(
@@ -393,10 +675,12 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             ).use { c -> buildList { while (c.moveToNext()) add(c.getLong(0)) } }
             for (id in ids) {
                 val r = byId(id) ?: continue
+                val snap = snapshot(db, id)
                 val stock = Locations.rename(stockOf(db, id), from, target)
                 val primary = if (Locations.same(r.location, from)) Locations.plain(target) else r.location
                 writeStock(db, id, stock, primary)
                 db.update("parts", ContentValues().apply { put("location", primary) }, "id = ?", arrayOf(id.toString()))
+                record(db, id, "rename bin", snap, group = group)
                 changed++
             }
             db.setTransactionSuccessful()
@@ -433,12 +717,14 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
     fun saveAll(entries: List<ScanEntry>) {
         if (entries.isEmpty()) return
         val db = writableDatabase
-        db.beginTransaction()
-        try {
-            for (e in entries) saveTx(e)
-            db.setTransactionSuccessful()
-        } finally {
-            db.endTransaction()
+        grouped {
+            db.beginTransaction()
+            try {
+                for (e in entries) saveTx(e)
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
         }
         onChanged?.invoke()
     }
@@ -449,6 +735,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         try {
             val now = now()
             val hit = find(e.mpn, e.customerPn, e.distributorPn)
+            val snap = hit?.let { snapshot(db, it.row.id) }
             val specs = e.specs.orElse(PartSpecs.fromDescription(e.description))
             val total: Int
             val partId: Long
@@ -510,7 +797,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                 })
                 if (partId > 0) writeStock(db, partId, mapOf(Locations.normalize(e.location) to e.quantity), e.location)
             }
-            db.insert("scan_log", null, ContentValues().apply {
+            val logId = db.insert("scan_log", null, ContentValues().apply {
                 put("ts", now)
                 put("part_key", e.mpn.ifBlank { e.customerPn.ifBlank { e.distributorPn } })
                 put("mode", if (e.addMode) "add" else "set")
@@ -526,6 +813,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                     if (e.kitQuantity != null) put("kit_qty", e.kitQuantity)
                 }, SQLiteDatabase.CONFLICT_REPLACE)
             }
+            if (partId > 0) record(db, partId, if (e.addMode) "scan add" else "scan set", snap, logId)
             db.setTransactionSuccessful()
             return total
         } finally {
@@ -635,8 +923,25 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         id: Long, stock: Map<String, Int>, location: String, description: String, unitCost: Double?, category: String,
         minQty: Int?,
     ) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val snap = snapshot(db, id) ?: return
+            updateTx(db, id, stock, location, description, unitCost, category, minQty)
+            record(db, id, "edit", snap)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        onChanged?.invoke()
+    }
+
+    private fun updateTx(
+        db: SQLiteDatabase, id: Long, stock: Map<String, Int>, location: String, description: String, unitCost: Double?,
+        category: String, minQty: Int?,
+    ) {
         val old = byId(id)
-        writeStock(writableDatabase, id, stock, location)
+        writeStock(db, id, stock, location)
         val v = ContentValues().apply {
             put("location", location.trim()); put("category", category)
             put("description", description.trim()); put("updated_at", now())
@@ -652,8 +957,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             v.put("price_source", ""); v.put("price_checked_at", "")
         }
         if (minQty != null && minQty > 0) v.put("min_qty", minQty) else v.putNull("min_qty")
-        writableDatabase.update("parts", v, "id = ?", arrayOf(id.toString()))
-        onChanged?.invoke()
+        db.update("parts", v, "id = ?", arrayOf(id.toString()))
     }
 
     private fun byId(id: Long): PartRow? =
@@ -667,6 +971,20 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
      */
     fun applyLookup(id: Long, u: LookupUpdate) {
         val old = byId(id) ?: return
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val snap = snapshot(db, id)
+            applyLookupTx(db, old, u)
+            record(db, id, "lookup ${u.source}".trim(), snap)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    private fun applyLookupTx(db: SQLiteDatabase, old: PartRow, u: LookupUpdate) {
+        val id = old.id
         val now = now()
         val v = ContentValues().apply {
             if (u.unitCost != null) {
@@ -679,7 +997,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             putSpecs(u.specs.orElse(PartSpecs.fromDescription(u.description)), null)
             put("updated_at", now)
         }
-        writableDatabase.update("parts", v, "id = ?", arrayOf(id.toString()))
+        db.update("parts", v, "id = ?", arrayOf(id.toString()))
     }
 
     /** Tells listeners (auto backup) that parts changed, e.g. after a batch of [applyLookup] calls. */
@@ -687,10 +1005,20 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         onChanged?.invoke()
     }
 
+    /** Deletes the part. The history keeps it as it was, so Undo brings it back (same id) for [SNAPSHOT_DAYS] days. */
     fun delete(id: Long) {
-        writableDatabase.delete("parts", "id = ?", arrayOf(id.toString()))
-        writableDatabase.delete("kit_items", "part_id = ?", arrayOf(id.toString()))
-        writableDatabase.delete("part_stock", "part_id = ?", arrayOf(id.toString()))
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val snap = snapshot(db, id)
+            db.delete("parts", "id = ?", arrayOf(id.toString()))
+            db.delete("kit_items", "part_id = ?", arrayOf(id.toString()))
+            db.delete("part_stock", "part_id = ?", arrayOf(id.toString()))
+            if (snap != null) record(db, id, "delete", snap)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
         onChanged?.invoke()
     }
 
@@ -714,10 +1042,11 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         val r = db.rawQuery("SELECT * FROM parts WHERE id = ?", arrayOf(id.toString())).use { c ->
             if (c.moveToFirst()) c.toRow() else null
         } ?: return null
+        val snap = snapshot(db, id)
         // Taken from the main bin first, then the other bins in order.
         val total = writeStock(db, id, Locations.take(stockOrLegacy(db, r), r.location, qty), r.location)
         db.update("parts", ContentValues().apply { put("updated_at", now) }, "id = ?", arrayOf(id.toString()))
-        db.insert("scan_log", null, ContentValues().apply {
+        val logId = db.insert("scan_log", null, ContentValues().apply {
             put("ts", now)
             put("part_key", r.mpn.ifBlank { r.customerPn.ifBlank { r.distributorPn } })
             put("mode", "use")
@@ -725,6 +1054,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             put("source", note); put("distributor_pn", r.distributorPn)
             put("customer_pn", r.customerPn); put("raw", "")
         })
+        record(db, id, if (note == "Used") "use" else "use · $note", snap, logId)
         return total
     }
 
@@ -756,13 +1086,15 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
     fun buildKit(kit: String, boards: Int): List<KitLine> {
         val plan = kitPlan(kit, boards)
         val db = writableDatabase
-        db.beginTransaction()
-        try {
-            val now = now()
-            for (line in plan) useTx(db, line.part.id, line.need, "Kit $kit × $boards", now)
-            db.setTransactionSuccessful()
-        } finally {
-            db.endTransaction()
+        grouped {
+            db.beginTransaction()
+            try {
+                val now = now()
+                for (line in plan) useTx(db, line.part.id, line.need, "Kit $kit × $boards", now)
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
         }
         onChanged?.invoke()
         return plan
@@ -860,14 +1192,16 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
     /** Subtracts a project build ([use]: part id → pieces) in one transaction, logging a "use" per part. */
     fun buildProject(projectId: Long, name: String, use: Map<Long, Int>, boards: Int) {
         val db = writableDatabase
-        db.beginTransaction()
-        try {
-            val now = now()
-            for ((partId, qty) in use) if (qty > 0) useTx(db, partId, qty, "Project $name × $boards", now)
-            db.update("projects", ContentValues().apply { put("updated_at", now) }, "id = ?", arrayOf(projectId.toString()))
-            db.setTransactionSuccessful()
-        } finally {
-            db.endTransaction()
+        grouped {
+            db.beginTransaction()
+            try {
+                val now = now()
+                for ((partId, qty) in use) if (qty > 0) useTx(db, partId, qty, "Project $name × $boards", now)
+                db.update("projects", ContentValues().apply { put("updated_at", now) }, "id = ?", arrayOf(projectId.toString()))
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
         }
         onChanged?.invoke()
     }
@@ -978,6 +1312,9 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
 
     companion object {
         private val STAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+        /** Days a change can still be undone (snapshots older than this are dropped). */
+        const val SNAPSHOT_DAYS = 30L
+        private const val PURGED = "purged"
         fun now(): String = LocalDateTime.now().format(STAMP)
         fun norm(s: String) = s.uppercase().replace(Regex("\\s+"), "")
 

@@ -399,7 +399,7 @@ private fun ProjectDetail(db: InventoryDb, id: Long, onBack: () -> Unit) {
                     db.buildProject(project.id, project.name, plan.use, boards)
                     confirmBuild = false
                     version++
-                    toast("Used parts for $boards × ${project.name}")
+                    UndoOffer.offer(context, "Used parts for $boards × ${project.name}", db.lastChange)
                 }) { Text("Use parts") }
             },
             dismissButton = { TextButton(onClick = { confirmBuild = false }) { Text("Cancel") } },

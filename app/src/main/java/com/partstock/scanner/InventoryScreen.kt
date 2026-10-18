@@ -91,6 +91,7 @@ fun InventoryScreen(
     var menuOpen by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<PartRow?>(openPart?.let { id -> parts.firstOrNull { it.id == id } }) }
     var labels by remember { mutableStateOf<List<LabelItem>?>(null) }
+    var history by remember { mutableStateOf<PartRow?>(null) }
     var pendingCsv by remember { mutableStateOf("") }
     var bucket by remember { mutableStateOf<String?>(null) } // null = all categories
     var buildingKit by remember { mutableStateOf(false) }
@@ -322,30 +323,35 @@ fun InventoryScreen(
             part = p,
             onDismiss = { editing = null },
             onSave = { stock, loc, desc, cost, cat, use, min ->
-                db.update(p.id, stock, loc, desc, cost, cat, min)
-                if (use > 0) {
-                    val left = db.use(p.id, use)
-                    toast("Used $use · $left left")
+                // The edit and the use are one change for Undo.
+                val left = db.grouped {
+                    db.update(p.id, stock, loc, desc, cost, cat, min)
+                    if (use > 0) db.use(p.id, use) else null
                 }
                 editing = null
                 version++
+                UndoOffer.offer(context, if (use > 0) "Used $use · $left left" else "Saved ${p.key()}", db.lastChange)
             },
             onDelete = {
                 db.delete(p.id)
                 editing = null
                 version++
-                toast("Deleted ${p.mpn.ifBlank { p.customerPn }}")
+                UndoOffer.offer(context, "Deleted ${p.key()}", db.lastChange)
             },
+            onHistory = { history = p },
             knownBins = remember(version) { db.locations().map { it.name } },
             onLabel = if (prefs != null) ({ labels = listOf(partLabel(p)) }) else null,
             onMove = { from, to, n ->
                 val moved = db.move(p.id, from, to, n) ?: 0
                 editing = null
                 version++
-                toast(if (moved > 0) "Moved $moved from $from to ${Locations.normalize(to)}" else "Nothing to move")
+                if (moved > 0) UndoOffer.offer(context, "Moved $moved from $from to ${Locations.normalize(to)}", db.lastChange)
+                else toast("Nothing to move")
             },
         )
     }
+
+    history?.let { p -> HistoryDialog(db, p) { history = null } }
 
     labels?.let { items ->
         if (prefs != null) LabelDialog(items, prefs) { labels = null }
@@ -369,7 +375,7 @@ fun InventoryScreen(
                 importingOrder = false
                 if (msg != null) {
                     version++
-                    toast(msg)
+                    UndoOffer.offer(context, msg, db.lastChange)
                 }
             },
         )
@@ -382,7 +388,7 @@ fun InventoryScreen(
             onBuilt = { msg ->
                 buildingKit = false
                 version++
-                toast(msg)
+                UndoOffer.offer(context, msg, db.lastChange)
             },
         )
     }
@@ -612,6 +618,7 @@ private fun EditDialog(
     onMove: (from: String, to: String, qty: Int) -> Unit = { _, _, _ -> },
     /** Make a QR label for this part; null hides the button. */
     onLabel: (() -> Unit)? = null,
+    onHistory: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val startBins = remember { part.bins() }
@@ -659,6 +666,7 @@ private fun EditDialog(
                         TextButton(onClick = { openLink(context, part.datasheetUrl) }) { Text("Datasheet") }
                     }
                     if (onLabel != null) TextButton(onClick = onLabel) { Text("Label") }
+                    if (onHistory != null) TextButton(onClick = onHistory) { Text("History") }
                 }
                 OutlinedTextField(description, { description = it }, label = { Text("Description") })
                 CategoryPicker(category) { category = it }
@@ -825,4 +833,66 @@ private fun MoveDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+private fun PartRow.key() = mpn.ifBlank { customerPn.ifBlank { distributorPn } }
+
+/** Every change to the part, newest first: date, what happened, old → new quantity and what else changed. */
+@Composable
+private fun HistoryDialog(db: InventoryDb, part: PartRow, onDismiss: () -> Unit) {
+    val entries = remember { db.history(part) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("History · ${part.key()}") },
+        text = {
+            Column(
+                Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                if (entries.isEmpty()) Text("No changes recorded yet.")
+                entries.forEach { h ->
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                historyAction(h.action) + if (h.undone) " (undone)" else "",
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f),
+                            )
+                            val qty = when {
+                                h.qtyBefore != null && h.qtyAfter != null && h.qtyBefore != h.qtyAfter -> "${h.qtyBefore} → ${h.qtyAfter}"
+                                h.qtyAfter != null -> "${h.qtyAfter}"
+                                h.qtyBefore != null -> "${h.qtyBefore} → –"
+                                else -> ""
+                            }
+                            Text(qty, style = MaterialTheme.typography.bodyMedium)
+                        }
+                        Text(
+                            h.ts + if (h.legacy) " · from scan log" else "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (h.summary.isNotBlank()) Text(h.summary, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
+}
+
+private fun historyAction(a: String): String = when {
+    a == "add" || a == "scan add" -> "Scan · add"
+    a == "set" || a == "scan set" -> "Scan · set count"
+    a == "use" -> "Used"
+    a.startsWith("use · ") -> "Used · " + a.removePrefix("use · ")
+    a == "edit" -> "Edited"
+    a == "move" -> "Moved"
+    a == "rename bin" -> "Bin renamed"
+    a == "delete" -> "Deleted"
+    a == "undo" -> "Undo"
+    a.startsWith("lookup") -> "Lookup" + a.removePrefix("lookup").let { if (it.isBlank()) "" else " ·$it" }
+    a == "import" -> "CSV import"
+    a == "restore" -> "CSV restore"
+    a == "undone" -> "Scan (undone)"
+    else -> a.replaceFirstChar { it.uppercase() }
 }
