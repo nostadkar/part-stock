@@ -52,7 +52,12 @@ class MainActivity : ComponentActivity() {
         val prefs = Prefs(this)
         val db = InventoryDb(applicationContext)
         val secrets = SecretStore(applicationContext)
-        db.onChanged = { AutoBackup.schedule(applicationContext, prefs, db) }
+        db.onChanged = {
+            AutoBackup.schedule(applicationContext, prefs, db)
+            FileSync.schedule(applicationContext, prefs, db)
+        }
+        // A change that couldn't reach the sync file last time (offline, app closed) is retried now.
+        if (prefs.syncPending) FileSync.schedule(applicationContext, prefs, db)
         setContent {
             PartStockTheme { App(prefs, db, secrets) }
         }

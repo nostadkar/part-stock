@@ -44,4 +44,29 @@ class Prefs(context: Context) {
     var autoBackupStatus: String
         get() = sp.getString("autoBackupStatus", "") ?: ""
         set(v) = sp.edit().putString("autoBackupStatus", v).apply()
+
+    /** "Sync to a file": the picked file (SAF document URI) rewritten after every change; blank = off. */
+    var syncFileUri: String
+        get() = sp.getString("syncFileUri", "") ?: ""
+        set(v) = sp.edit().putString("syncFileUri", v).apply()
+
+    /** The sync file's display name, e.g. "part-stock.csv". */
+    var syncFileName: String
+        get() = sp.getString("syncFileName", "") ?: ""
+        set(v) = sp.edit().putString("syncFileName", v).apply()
+
+    /** When the sync file was last written successfully (epoch ms); 0 = not yet. */
+    var syncLastOk: Long
+        get() = sp.getLong("syncLastOk", 0L)
+        set(v) = sp.edit().putLong("syncLastOk", v).apply()
+
+    /** Why the last sync failed; blank when it worked. */
+    var syncError: String
+        get() = sp.getString("syncError", "") ?: ""
+        set(v) = sp.edit().putString("syncError", v).apply()
+
+    /** A change hasn't reached the sync file yet (retried at the next start or change). */
+    var syncPending: Boolean
+        get() = sp.getBoolean("syncPending", false)
+        set(v) = sp.edit().putBoolean("syncPending", v).apply()
 }

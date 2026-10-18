@@ -171,6 +171,13 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   file, other parts kept) or *Replace everything* (the scan log is kept); a summary like "42 parts: 30 new, 12 updated"
   is shown before anything changes. *Auto backup* writes the inventory CSV to a folder you pick after every save and
   keeps the newest 5 files; pick a folder your cloud app syncs to keep a copy off the phone.
+- **Sync to a file** (Settings → Backup & restore): *New file…* or *Existing file…* opens Android's file picker; choose
+  Google Drive there (or any other place) and that one CSV is rewritten with the inventory after every change, in the
+  background. Open it in Google Sheets and it always shows current stock. Settings shows "Last synced 2 min ago" or why
+  the last write failed; a failed write (offline, lost access) is retried on the next change and at the next app start,
+  and *Sync now* retries straight away. It uses the Storage Access Framework with a persisted permission for that one
+  file: no Google login, account or API key is in the app or this repo. Drive uploads the file itself (it queues the
+  upload while offline). *Turn off* stops syncing and leaves the file where it is.
 - **Duplicate-bag guard**: a bag is recognised by Mouser's Cust PO + Line Item, or DigiKey's part number + PO +
   quantity (+ date code). Scanning a bag that was already saved shows "This bag was already added on Oct 17
   (qty 10)" and switches to "Set count to this". Labels without those fields (e.g. a kit label alone) behave as before.
@@ -205,6 +212,8 @@ app/src/main/java/com/partstock/scanner/
   parse/OrderCsv.java        Order CSV column mapping (pure Java, unit tested)
   parse/InventoryCsv.java    CSV read/write for export and restore (pure Java, unit tested)
   AutoBackup.kt              Writes the inventory CSV to a picked folder after each save
+  FileSync.kt                Rewrites one picked file (e.g. on Google Drive) with the inventory CSV after each change
+  parse/SyncStatus.java      "Last synced 2 min ago" wording (pure Java, unit tested)
   Export.kt                  Share sheet / save-to-file, inventory + photos zip
   PartPhotos.kt              Part photos: resize/store, thumbnails, camera/gallery pickers, photo strip
 app/src/test/.../LabelParserTest.java

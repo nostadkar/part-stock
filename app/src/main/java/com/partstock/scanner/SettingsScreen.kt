@@ -32,6 +32,9 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,6 +44,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.selection.selectable
 import com.partstock.scanner.parse.InventoryCsv
+import com.partstock.scanner.parse.SyncStatus
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.platform.LocalContext
@@ -74,6 +79,33 @@ fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: 
     var backupFolder by remember { mutableStateOf(prefs.autoBackupUri) }
     var backupStatus by remember { mutableStateOf(prefs.autoBackupStatus) }
     var busy by remember { mutableStateOf(false) }
+
+    // ---- sync to a file ----
+    var syncFile by remember { mutableStateOf(prefs.syncFileUri) }
+    var syncTick by remember { mutableIntStateOf(0) } // bumped by sync results and once a minute ("2 min ago")
+    DisposableEffect(Unit) {
+        FileSync.onStatus = { syncTick++ }
+        onDispose { FileSync.onStatus = null }
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(30_000)
+            syncTick++
+        }
+    }
+    fun startSync(uri: Uri?) {
+        if (uri == null) return
+        FileSync.choose(context, prefs, uri)
+        syncFile = prefs.syncFileUri
+        busy = true
+        scope.launch {
+            withContext(Dispatchers.IO) { FileSync.runNow(context, prefs, db) }
+            syncTick++
+            busy = false
+        }
+    }
+    val createSyncFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { startSync(it) }
+    val pickSyncFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { startSync(it) }
 
     val pickCsv = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -338,6 +370,47 @@ fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: 
             if (backupFolder.isNotBlank() && backupStatus.isNotBlank()) {
                 Text(backupStatus, style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+
+            Text("Sync to a file", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+            Text(
+                if (syncFile.isBlank()) "Off. Pick or create one CSV file and it is rewritten with the inventory after every " +
+                    "change. Choose Google Drive in the file picker and opening that file in Google Sheets always shows " +
+                    "current stock. No login or key is stored in the app."
+                else "On: rewrites ${prefs.syncFileName.ifBlank { "the chosen file" }} after every change.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(enabled = !busy, onClick = { createSyncFile.launch("part-stock-inventory.csv") }) {
+                    Text("New file…")
+                }
+                OutlinedButton(enabled = !busy, onClick = {
+                    pickSyncFile.launch(arrayOf("text/*", "application/csv", "text/comma-separated-values", "application/octet-stream"))
+                }) { Text("Existing file…") }
+            }
+            if (syncFile.isNotBlank()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(enabled = !busy, onClick = {
+                        busy = true
+                        scope.launch {
+                            withContext(Dispatchers.IO) { FileSync.runNow(context, prefs, db) }
+                            syncTick++
+                            busy = false
+                        }
+                    }) { Text("Sync now") }
+                    TextButton(onClick = {
+                        FileSync.turnOff(context, prefs)
+                        syncFile = ""
+                    }) { Text("Turn off") }
+                }
+                val line = remember(syncTick, syncFile) {
+                    SyncStatus.line(prefs.syncLastOk, prefs.syncError, System.currentTimeMillis())
+                }
+                Text(
+                    line, style = MaterialTheme.typography.bodySmall,
+                    color = if (prefs.syncError.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant
+                    else MaterialTheme.colorScheme.error,
+                )
             }
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
