@@ -350,10 +350,22 @@ fun ReviewScreen(
                     datasheetUrl = datasheetUrl, specs = apiSpecs,
                 )
                 val name = mpn.ifBlank { customerPn.ifBlank { distributorPn } }
+                var photoFile = ""
                 try {
-                    val total = withContext(Dispatchers.IO) { db.save(entry) }
+                    val total = withContext(Dispatchers.IO) {
+                        // The label photo is kept (resized JPEG, app-private) as the part's thumbnail.
+                        photoFile = photo?.let {
+                            try {
+                                PartPhotos.save(context, it)
+                            } catch (e: Exception) {
+                                null // a photo that can't be written never blocks the save
+                            }
+                        }.orEmpty()
+                        db.save(entry.copy(photoFile = photoFile))
+                    }
                     onSaved("Saved $name — $total in stock")
                 } catch (e: Exception) {
+                    if (photoFile.isNotBlank()) PartPhotos.file(context, photoFile).delete()
                     error = "Save failed: ${e.message}"
                     saving = false
                 }
@@ -567,7 +579,7 @@ fun ReviewScreen(
             },
         )
     }
-    if (showPhoto && photo != null) PhotoViewer(photo) { showPhoto = false }
+    if (showPhoto && photo != null) PhotoViewer(photo, onDismiss = { showPhoto = false })
 }
 
 /** Small camera button in a field: re-read just this field from a close-up photo. */

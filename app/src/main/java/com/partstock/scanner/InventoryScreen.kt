@@ -87,6 +87,8 @@ fun InventoryScreen(
     val context = LocalContext.current
     var version by remember { mutableIntStateOf(0) } // bump to reload after edits
     val parts = remember(version) { db.all() }
+    val photos = remember(version) { db.allPhotos() }
+    val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
     var menuOpen by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<PartRow?>(openPart?.let { id -> parts.firstOrNull { it.id == id } }) }
@@ -100,6 +102,22 @@ fun InventoryScreen(
     var importingOrder by remember { mutableStateOf(false) }
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+
+    var zipping by remember { mutableStateOf(false) }
+    val saveZip = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        if (uri != null) {
+            zipping = true
+            scope.launch {
+                try {
+                    val n = withContext(Dispatchers.IO) { Export.saveZip(context, uri, db) }
+                    toast("Saved with $n photo${if (n == 1) "" else "s"}")
+                } catch (e: Exception) {
+                    toast("Save failed: ${e.message}")
+                }
+                zipping = false
+            }
+        }
+    }
 
     val saveFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
         if (uri != null) {
@@ -163,6 +181,23 @@ fun InventoryScreen(
                             menuOpen = false
                             pendingCsv = db.inventoryCsv()
                             saveFile.launch(Export.fileName("inventory"))
+                        })
+                        DropdownMenuItem(text = { Text("Share inventory + photos (zip)") }, enabled = !zipping, onClick = {
+                            menuOpen = false
+                            zipping = true
+                            scope.launch {
+                                try {
+                                    val chooser = withContext(Dispatchers.IO) { Export.shareZip(context, db) }
+                                    context.startActivity(chooser)
+                                } catch (e: Exception) {
+                                    toast("Export failed: ${e.message}")
+                                }
+                                zipping = false
+                            }
+                        })
+                        DropdownMenuItem(text = { Text("Save inventory + photos (zip) to file…") }, enabled = !zipping, onClick = {
+                            menuOpen = false
+                            saveZip.launch(Export.zipName())
                         })
                         if (prefs != null) {
                             DropdownMenuItem(text = { Text("Make QR labels for the ${shown.size} shown parts…") }, onClick = {
@@ -271,6 +306,9 @@ fun InventoryScreen(
                 items(rows, key = { it.id }) { p ->
                     Card(Modifier.fillMaxWidth().clickable { editing = p }) {
                         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            photos[p.id]?.firstOrNull()?.let { f ->
+                                PhotoThumb(f, 48.dp, Modifier.padding(end = 12.dp))
+                            }
                             Column(Modifier.weight(1f)) {
                                 Text(
                                     p.mpn.ifBlank { p.customerPn.ifBlank { p.distributorPn } },
@@ -339,6 +377,7 @@ fun InventoryScreen(
                 UndoOffer.offer(context, "Deleted ${p.key()}", db.lastChange)
             },
             onHistory = { history = p },
+            photos = { PartPhotosRow(db, p.id, onChanged = { version++ }) },
             knownBins = remember(version) { db.locations().map { it.name } },
             onLabel = if (prefs != null) ({ labels = listOf(partLabel(p)) }) else null,
             onMove = { from, to, n ->
@@ -619,6 +658,8 @@ private fun EditDialog(
     /** Make a QR label for this part; null hides the button. */
     onLabel: (() -> Unit)? = null,
     onHistory: (() -> Unit)? = null,
+    /** The part's photos strip; null hides it. */
+    photos: (@Composable () -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val startBins = remember { part.bins() }
@@ -668,6 +709,7 @@ private fun EditDialog(
                     if (onLabel != null) TextButton(onClick = onLabel) { Text("Label") }
                     if (onHistory != null) TextButton(onClick = onHistory) { Text("History") }
                 }
+                photos?.invoke()
                 OutlinedTextField(description, { description = it }, label = { Text("Description") })
                 CategoryPicker(category) { category = it }
                 if (multi) {

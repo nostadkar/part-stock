@@ -2,8 +2,11 @@
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="secure.xml" />
+        <!-- Photos would push the backup past Android's 25 MB limit; use Export → inventory + photos (zip). -->
+        <exclude domain="file" path="photos" />
     </cloud-backup>
     <device-transfer>
+        <!-- A phone-to-phone transfer has no size limit, so photos go along. -->
         <exclude domain="sharedpref" path="secure.xml" />
     </device-transfer>
 </data-extraction-rules>

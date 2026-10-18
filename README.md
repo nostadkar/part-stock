@@ -141,6 +141,15 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   (`PS:P:<part id>` or `PS:L:<bin>`) plus part number, description and bin. Point the scan screen at a label and tap the
   shutter: a part label opens that part (to use or correct stock), a bin label sets the bin for the next saves. Other QR
   codes are ignored. The PDF is drawn on the phone; nothing is sent anywhere.
+- **Photos**: the label photo from a scan is kept as the part's thumbnail (shown on its inventory row) when the part has
+  no photo yet; later scans of the same part don't add more. In a part's dialog, *Take photo* or *Add from gallery*
+  adds more (of the bag or the part itself); tap a thumbnail to view it full screen (pinch to zoom) or delete it. Photos
+  are resized to 1600 px JPEGs (a few hundred KB each) in the app's private storage. Deleting a part removes its photos
+  (Undo brings them back; the files are removed for good after 30 days). Export → *Share / Save inventory + photos
+  (zip)* gives the inventory CSV, the photos named by part number, and a `photos.csv` saying which is which.
+  **Photos are not in Android's cloud backup** (that backup stops working past 25 MB, which a few hundred photos would
+  pass, and it would take the database backup down with it); a phone-to-phone transfer does include them. Use the zip
+  export to keep a copy of the photos.
 - **Low stock**: set an optional *Minimum* in a part's edit dialog. Parts at or below it show their count in red,
   the *Low stock* chip lists them and the summary line counts them. Export → *Reorder list CSV* lists the parts below
   their minimum with the quantity to order (minimum − on hand, rounded up: exact below 10, then to 5s, 10s, 50s, 100s),
@@ -196,7 +205,8 @@ app/src/main/java/com/partstock/scanner/
   parse/OrderCsv.java        Order CSV column mapping (pure Java, unit tested)
   parse/InventoryCsv.java    CSV read/write for export and restore (pure Java, unit tested)
   AutoBackup.kt              Writes the inventory CSV to a picked folder after each save
-  Export.kt                  Share sheet / save-to-file
+  Export.kt                  Share sheet / save-to-file, inventory + photos zip
+  PartPhotos.kt              Part photos: resize/store, thumbnails, camera/gallery pickers, photo strip
 app/src/test/.../LabelParserTest.java
 ```
 

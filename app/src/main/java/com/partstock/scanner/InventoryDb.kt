@@ -14,6 +14,7 @@ import com.partstock.scanner.parse.Links
 import com.partstock.scanner.parse.Locations
 import com.partstock.scanner.parse.PartSpecs
 import com.partstock.scanner.parse.ReorderList
+import java.io.File
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.LocalDateTime
@@ -113,7 +114,15 @@ data class ScanEntry(
     val datasheetUrl: String = "",
     /** Specs from a lookup's attributes; blanks are filled from [description] when saving. */
     val specs: PartSpecs = PartSpecs.EMPTY,
+    /**
+     * The scan's label photo, already written by [PartPhotos.save]; blank = none. Kept as the part's first photo when
+     * the part has none yet, otherwise the file is deleted.
+     */
+    val photoFile: String = "",
 )
+
+/** A photo attached to a part ([file] is a name in [PartPhotos.dir]); [kind] is "label" (from a scan) or "photo". */
+data class PartPhoto(val id: Long, val partId: Long, val file: String, val kind: String, val createdAt: String)
 
 /** A kit with parts registered from scanned Entrust kit labels. */
 data class KitSummary(val kit: String, val parts: Int, val kitQuantity: Int?)
@@ -187,7 +196,11 @@ data class HistoryEntry(
 data class ImportSummary(val rows: Int, val added: Int, val updated: Int, val removed: Int)
 
 /** Inventory stored on the phone: one row per part, plus a log of every save. */
-class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 11) {
+class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 12) {
+
+    /** Part photos (see [PartPhotos]); photos of deleted parts wait in trash/ until Undo can't bring them back. */
+    private val photoDir = File(context.applicationContext.filesDir, "photos")
+    private val trashDir = File(photoDir, "trash")
 
     /** Called after every change to the parts table (used for auto backup). */
     @Volatile var onChanged: (() -> Unit)? = null
@@ -228,6 +241,17 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         createProjects(db)
         createStock(db)
         createHistory(db, 0)
+        createPhotos(db)
+    }
+
+    /** Photos per part: file names only, the JPEGs are in [photoDir]. */
+    private fun createPhotos(db: SQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS part_photos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, part_id INTEGER NOT NULL, file TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'photo', created_at TEXT NOT NULL DEFAULT '')"""
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS part_photos_part ON part_photos(part_id)")
     }
 
     /**
@@ -258,6 +282,78 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             "UPDATE part_history SET snapshot = ? WHERE ts < ? AND snapshot NOT IN ('', ?)",
             arrayOf(PURGED, cutoff, PURGED),
         )
+        try {
+            cleanPhotoFiles(db)
+        } catch (_: Exception) {
+            // Tidying photo files is best effort; never block opening the inventory.
+        }
+    }
+
+    /**
+     * Removes photos of deleted parts once Undo can't bring them back ([SNAPSHOT_DAYS]), and photo files no part refers
+     * to (left behind by a save that failed) after a day.
+     */
+    private fun cleanPhotoFiles(db: SQLiteDatabase) {
+        val now = System.currentTimeMillis()
+        trashDir.listFiles()?.forEach { f ->
+            if (f.isFile && now - f.lastModified() > SNAPSHOT_DAYS * DAY_MS) f.delete()
+        }
+        val files = photoDir.listFiles()?.filter { it.isFile } ?: return
+        if (files.isEmpty()) return
+        val used = db.rawQuery("SELECT file FROM part_photos", null).use { c ->
+            HashSet<String>().apply { while (c.moveToNext()) add(c.getString(0)) }
+        }
+        for (f in files) if (f.name !in used && now - f.lastModified() > DAY_MS) f.delete()
+    }
+
+    private fun trashPhoto(name: String) {
+        val f = File(photoDir, name)
+        if (!f.isFile) return
+        trashDir.mkdirs()
+        val t = File(trashDir, name)
+        if (f.renameTo(t)) t.setLastModified(System.currentTimeMillis()) else f.delete()
+        PartPhotos.forget(name)
+    }
+
+    private fun photoFiles(db: SQLiteDatabase, partId: Long): List<String> =
+        db.rawQuery("SELECT file FROM part_photos WHERE part_id = ? ORDER BY id", arrayOf(partId.toString())).use { c ->
+            buildList { while (c.moveToNext()) add(c.getString(0)) }
+        }
+
+    /** A part's photos, oldest (the label photo from the first scan) first. */
+    fun photos(partId: Long): List<PartPhoto> =
+        readableDatabase.rawQuery(
+            "SELECT id, part_id, file, kind, created_at FROM part_photos WHERE part_id = ? ORDER BY id",
+            arrayOf(partId.toString()),
+        ).use { c ->
+            buildList { while (c.moveToNext()) add(PartPhoto(c.getLong(0), c.getLong(1), c.getString(2), c.getString(3).orEmpty(), c.getString(4).orEmpty())) }
+        }
+
+    /** Every part's photo file names, oldest first (thumbnails use the first; the photo export uses all). */
+    fun allPhotos(): Map<Long, List<String>> {
+        val m = LinkedHashMap<Long, MutableList<String>>()
+        readableDatabase.rawQuery("SELECT part_id, file FROM part_photos ORDER BY id", null).use { c ->
+            while (c.moveToNext()) m.getOrPut(c.getLong(0)) { mutableListOf() }.add(c.getString(1))
+        }
+        return m
+    }
+
+    /** Attaches a photo file (already in [photoDir]) to a part. Photos aren't stock, so this isn't in the history. */
+    fun addPhoto(partId: Long, file: String, kind: String = "photo") {
+        writableDatabase.insert("part_photos", null, ContentValues().apply {
+            put("part_id", partId); put("file", file); put("kind", kind); put("created_at", now())
+        })
+    }
+
+    /** Removes one photo and deletes its file. */
+    fun deletePhoto(photoId: Long) {
+        val db = writableDatabase
+        val file = db.rawQuery("SELECT file FROM part_photos WHERE id = ?", arrayOf(photoId.toString())).use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        } ?: return
+        db.delete("part_photos", "id = ?", arrayOf(photoId.toString()))
+        File(photoDir, file).delete()
+        PartPhotos.forget(file)
     }
 
     /** Pieces per part per bin. parts.quantity stays as the total and parts.location as the main bin. */
@@ -368,6 +464,10 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             val lastLog = db.rawQuery("SELECT IFNULL(MAX(id), 0) FROM scan_log", null).use { c -> c.moveToFirst(); c.getLong(0) }
             createHistory(db, lastLog)
         }
+        if (oldVersion < 12) {
+            // New table only (part photos); nothing existing changes.
+            createPhotos(db)
+        }
     }
 
     // ---------------------------------------------------------------- history and undo
@@ -401,6 +501,15 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                         put("updated_at", c.getString(5).orEmpty())
                     })
                 }
+            }
+        })
+        o.put("_photos", db.rawQuery(
+            "SELECT file, kind, created_at FROM part_photos WHERE part_id = ? ORDER BY id", arrayOf(id.toString()),
+        ).use { c ->
+            JSONArray().apply {
+                while (c.moveToNext()) put(JSONObject().apply {
+                    put("file", c.getString(0)); put("kind", c.getString(1).orEmpty()); put("created_at", c.getString(2).orEmpty())
+                })
             }
         })
         return o
@@ -500,6 +609,8 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         db.delete("kit_items", "part_id = ?", args)
         if (snap.isEmpty()) { // the change created the part
             db.delete("parts", "id = ?", args)
+            photoFiles(db, id).forEach(::trashPhoto)
+            db.delete("part_photos", "part_id = ?", args)
             return
         }
         val o = JSONObject(snap)
@@ -534,6 +645,23 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                     put("ref_des", k.optString("ref_des")); put("updated_at", k.optString("updated_at"))
                     if (!k.isNull("item")) put("item", k.getInt("item"))
                     if (!k.isNull("kit_qty")) put("kit_qty", k.getInt("kit_qty"))
+                })
+            }
+        }
+        // Photos aren't in the history: Undo only brings back the ones a delete took away, and never removes any.
+        o.optJSONArray("_photos")?.let { a ->
+            val have = photoFiles(db, id).toSet()
+            for (i in 0 until a.length()) {
+                val p = a.getJSONObject(i)
+                val name = p.getString("file")
+                if (name in have) continue
+                val f = File(photoDir, name)
+                val t = File(trashDir, name)
+                if (!f.isFile && t.isFile) t.renameTo(f)
+                if (!f.isFile) continue
+                db.insert("part_photos", null, ContentValues().apply {
+                    put("part_id", id); put("file", name); put("kind", p.optString("kind", "photo"))
+                    put("created_at", p.optString("created_at"))
                 })
             }
         }
@@ -813,6 +941,11 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                     if (e.kitQuantity != null) put("kit_qty", e.kitQuantity)
                 }, SQLiteDatabase.CONFLICT_REPLACE)
             }
+            if (e.photoFile.isNotBlank()) {
+                // The label photo becomes the part's thumbnail; later scans of the same part don't pile up photos.
+                if (partId > 0 && photoFiles(db, partId).isEmpty()) addPhoto(partId, e.photoFile, "label")
+                else File(photoDir, e.photoFile).delete()
+            }
             if (partId > 0) record(db, partId, if (e.addMode) "scan add" else "scan set", snap, logId)
             db.setTransactionSuccessful()
             return total
@@ -831,12 +964,20 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         var added = 0
         var updated = 0
         var removed = 0
+        var replacedPhotos = emptyList<String>()
         db.beginTransaction()
         try {
             val now = now()
             if (replace) {
                 removed = db.delete("parts", null, null)
                 db.delete("part_stock", null, null)
+                // The parts come back from the file with new ids, so their photos can't follow; they go with them.
+                if (!dryRun) {
+                    replacedPhotos = db.rawQuery("SELECT file FROM part_photos", null).use { c ->
+                        buildList { while (c.moveToNext()) add(c.getString(0)) }
+                    }
+                    db.delete("part_photos", null, null)
+                }
             }
             for (r in rows) {
                 // The Locations column wins when present; otherwise the whole quantity is in the Location bin.
@@ -895,6 +1036,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         } finally {
             db.endTransaction()
         }
+        replacedPhotos.forEach(::trashPhoto)
         if (!dryRun) onChanged?.invoke()
         return ImportSummary(rows.size, added, updated, removed)
     }
@@ -1008,17 +1150,22 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
     /** Deletes the part. The history keeps it as it was, so Undo brings it back (same id) for [SNAPSHOT_DAYS] days. */
     fun delete(id: Long) {
         val db = writableDatabase
+        var photos = emptyList<String>()
         db.beginTransaction()
         try {
             val snap = snapshot(db, id)
+            photos = photoFiles(db, id)
             db.delete("parts", "id = ?", arrayOf(id.toString()))
             db.delete("kit_items", "part_id = ?", arrayOf(id.toString()))
             db.delete("part_stock", "part_id = ?", arrayOf(id.toString()))
+            db.delete("part_photos", "part_id = ?", arrayOf(id.toString()))
             if (snap != null) record(db, id, "delete", snap)
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
         }
+        // Its photos leave the part now; the files are removed for good when Undo can no longer bring the part back.
+        photos.forEach(::trashPhoto)
         onChanged?.invoke()
     }
 
@@ -1315,6 +1462,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         /** Days a change can still be undone (snapshots older than this are dropped). */
         const val SNAPSHOT_DAYS = 30L
         private const val PURGED = "purged"
+        private const val DAY_MS = 24L * 60 * 60 * 1000
         fun now(): String = LocalDateTime.now().format(STAMP)
         fun norm(s: String) = s.uppercase().replace(Regex("\\s+"), "")
 

@@ -40,6 +40,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -235,7 +236,14 @@ private fun linesInBox(frame: CapturedFrame, box: Rect, preview: Rect): List<Ocr
 
 /** Full-screen photo: pinch to zoom, drag to pan, double-tap to reset, tap the X to close. */
 @Composable
-fun PhotoViewer(photo: Bitmap, onDismiss: () -> Unit) {
+fun PhotoViewer(
+    photo: Bitmap,
+    onDismiss: () -> Unit,
+    description: String = "Photo that was read",
+    /** Shows a Delete button (tap twice) when set. */
+    onDelete: (() -> Unit)? = null,
+) {
+    var confirmDelete by remember { mutableStateOf(false) }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     val image = remember(photo) { photo.asImageBitmap() }
@@ -243,7 +251,7 @@ fun PhotoViewer(photo: Bitmap, onDismiss: () -> Unit) {
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             Image(
                 image,
-                contentDescription = "Photo that was read",
+                contentDescription = description,
                 contentScale = ContentScale.Fit,
                 modifier = Modifier
                     .fillMaxSize()
@@ -273,7 +281,13 @@ fun PhotoViewer(photo: Bitmap, onDismiss: () -> Unit) {
             Row(
                 Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(8.dp),
                 horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
+                if (onDelete != null) {
+                    TextButton(onClick = { if (confirmDelete) onDelete() else confirmDelete = true }) {
+                        Text(if (confirmDelete) "Tap again to delete" else "Delete", color = Color.White)
+                    }
+                }
                 IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, contentDescription = "Close", tint = Color.White) }
             }
         }

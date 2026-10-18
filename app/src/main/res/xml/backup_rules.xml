@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The encrypted API key file stays on the phone: never copied to cloud backup. -->
+<!--
+  The encrypted API key file stays on the phone: never copied to cloud backup.
+  Part photos (files/photos/) are left out too: Android's cloud backup stops working for an app over 25 MB, and a few
+  hundred photos would pass that and take the inventory database's backup down with them.
+-->
 <full-backup-content>
     <exclude domain="sharedpref" path="secure.xml" />
+    <exclude domain="file" path="photos" />
 </full-backup-content>
