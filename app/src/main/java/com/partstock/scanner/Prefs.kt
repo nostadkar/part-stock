@@ -9,4 +9,14 @@ class Prefs(context: Context) {
     var lastLocation: String
         get() = sp.getString("lastLocation", "") ?: ""
         set(v) = sp.edit().putString("lastLocation", v.trim()).apply()
+
+    /** Last time the app checked GitHub for a newer build (epoch ms). */
+    var lastUpdateCheck: Long
+        get() = sp.getLong("lastUpdateCheck", 0L)
+        set(v) = sp.edit().putLong("lastUpdateCheck", v).apply()
+
+    /** Build the user tapped "Later" on; the automatic check stays quiet until a newer one appears. */
+    var dismissedBuild: Int
+        get() = sp.getInt("dismissedBuild", 0)
+        set(v) = sp.edit().putInt("dismissedBuild", v).apply()
 }

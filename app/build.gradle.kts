@@ -12,8 +12,11 @@ android {
         applicationId = "com.partstock.scanner"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        // CI builds are numbered by the workflow run, matching the release tag "build-N".
+        // The in-app updater compares this number with the latest release.
+        val ciBuild = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
+        versionCode = ciBuild ?: 1
+        versionName = if (ciBuild != null) "build $ciBuild" else "local"
     }
 
     signingConfigs {

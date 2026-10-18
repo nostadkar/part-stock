@@ -32,6 +32,11 @@ open the repo → **Releases** → latest → tap `part-stock.apk` → allow ins
 The APK is signed with a test key kept in the repo (`app/partstock-test.keystore`), so each new build
 installs over the previous one and your inventory is kept. Don't reuse that key for anything published.
 
+**In-app updates**: from this build on, the app checks the latest release when it starts (at most every 6 hours)
+and offers "Update available". Tap Update: it downloads `part-stock.apk` from this repo's releases, checks it is a
+newer Part Stock build, and opens Android's installer (the first time, Android asks you to allow installs from
+Part Stock). Settings → Check for updates does the same on demand. The build number is the workflow run number.
+
 To build locally instead: open the folder in Android Studio and press Run. Min Android 8.0.
 
 ## Links, cost and the Mouser API key
@@ -54,7 +59,9 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
 
 ## Using it
 
-- Fit the label in the box and tap the shutter, or pick an existing photo.
+- Fit the label in the box and tap the shutter, or pick an existing photo. The camera focuses on the box first
+  (tap the preview to focus somewhere else), then reads 3 photos in a row and takes, for each field, the value
+  most photos agree on, so a single misread character doesn't stick. Hold still for about two seconds.
   The foil bags glare: tilt the bag a little rather than using the light.
 - The review screen shows what it read and whether the part is already in stock
   ("Already in stock: 500 · after save: 529").
@@ -77,6 +84,8 @@ app/src/main/java/com/partstock/scanner/
   parse/LabelParser.java     Label → fields (pure Java, unit tested)
   OcrEngine.kt               ML Kit text recognition
   ScanScreen.kt              CameraX preview, capture, photo picker
+  parse/ScanMerger.java      Votes field by field across a burst of reads
+  Updater.kt                 Checks GitHub releases, downloads and installs a newer APK
   ReviewScreen.kt            Edit fields, stock check, save
   InventoryScreen.kt         List, search, edit, delete, export
   InventoryDb.kt             SQLite storage + CSV

@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -26,8 +27,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.launch
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -38,6 +42,12 @@ fun SettingsScreen(secrets: SecretStore, onDone: () -> Unit) {
     var key by remember { mutableStateOf("") }
     var saved by remember { mutableStateOf(secrets.hasMouserKey()) }
     var status by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var checking by remember { mutableStateOf(false) }
+    var updateStatus by remember { mutableStateOf<String?>(null) }
+    var update by remember { mutableStateOf<Updater.Release?>(null) }
+    update?.let { r -> UpdateDialog(release = r, onLater = { update = null }, onClose = { update = null }) }
 
     Scaffold(
         topBar = {
@@ -94,6 +104,33 @@ fun SettingsScreen(secrets: SecretStore, onDone: () -> Unit) {
                 }
             }
             status?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            Text("App updates", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "This is ${Updater.currentName(context)}. The app checks GitHub for a newer build when it starts " +
+                    "and offers to install it. Your inventory is kept.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            OutlinedButton(
+                enabled = !checking,
+                onClick = {
+                    checking = true
+                    updateStatus = null
+                    scope.launch {
+                        try {
+                            val r = Updater.latest()
+                            if (r != null && r.build > Updater.currentBuild(context)) update = r
+                            else updateStatus = "You have the latest build."
+                        } catch (e: Exception) {
+                            updateStatus = "Couldn't check: ${e.message}"
+                        } finally {
+                            checking = false
+                        }
+                    }
+                },
+            ) { Text(if (checking) "Checking…" else "Check for updates") }
+            updateStatus?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
         }
     }
 }

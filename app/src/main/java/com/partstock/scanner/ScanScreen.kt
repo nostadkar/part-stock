@@ -8,6 +8,7 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
@@ -15,6 +16,14 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import android.annotation.SuppressLint
+import android.view.MotionEvent
+import com.google.common.util.concurrent.ListenableFuture
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -73,7 +82,8 @@ fun ScanScreen(
     partCount: Int,
     onInventory: () -> Unit,
     onSettings: () -> Unit,
-    onLines: (List<OcrLine>) -> Unit,
+    /** One list of OCR lines per photo. The camera sends a short burst; a picked photo sends one. */
+    onFrames: (List<List<OcrLine>>) -> Unit,
     onError: (String) -> Unit,
 ) {
     val context = LocalContext.current
@@ -97,54 +107,46 @@ fun ScanScreen(
     var torch by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
 
-    fun runOcr(image: InputImage, onFinally: () -> Unit = {}) {
-        scope.launch {
-            try {
-                onLines(OcrEngine.recognize(image))
-            } catch (e: Exception) {
-                onError("Text recognition failed: ${e.message}")
-            } finally {
-                onFinally()
-                busy = false
-            }
-        }
-    }
+    var progress by remember { mutableStateOf<String?>(null) }
+    var previewView by remember { mutableStateOf<PreviewView?>(null) }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
         if (uri != null) {
             busy = true
-            try {
-                runOcr(InputImage.fromFilePath(context, uri))
-            } catch (e: Exception) {
-                busy = false
-                onError("Couldn't open photo: ${e.message}")
+            scope.launch {
+                try {
+                    onFrames(listOf(OcrEngine.recognize(InputImage.fromFilePath(context, uri))))
+                } catch (e: Exception) {
+                    onError("Couldn't read photo: ${e.message}")
+                } finally {
+                    busy = false
+                }
             }
         }
     }
 
     fun capture() {
         busy = true
-        imageCapture.takePicture(
-            ContextCompat.getMainExecutor(context),
-            object : ImageCapture.OnImageCapturedCallback() {
-                @androidx.annotation.OptIn(ExperimentalGetImage::class)
-                override fun onCaptureSuccess(image: ImageProxy) {
-                    val media = image.image
-                    if (media == null) {
-                        image.close()
-                        busy = false
-                        onError("Camera returned no image")
-                        return
-                    }
-                    runOcr(InputImage.fromMediaImage(media, image.imageInfo.rotationDegrees)) { image.close() }
+        scope.launch {
+            try {
+                // Focus and expose on the label box first: a soft photo is the main cause of misreads.
+                val cam = camera
+                val view = previewView
+                if (cam != null && view != null) focusAt(cam, view, view.width / 2f, view.height / 2f)
+                // Read a short burst and let the frames vote on each field, so one slip doesn't stick.
+                val frames = mutableListOf<List<OcrLine>>()
+                for (i in 1..BURST_FRAMES) {
+                    progress = "Reading $i/$BURST_FRAMES… hold still"
+                    frames.add(captureAndRead(imageCapture, context))
                 }
-
-                override fun onError(exception: ImageCaptureException) {
-                    busy = false
-                    onError("Capture failed: ${exception.message}")
-                }
-            },
-        )
+                onFrames(frames)
+            } catch (e: Exception) {
+                onError("Capture failed: ${e.message}")
+            } finally {
+                progress = null
+                busy = false
+            }
+        }
     }
 
     Scaffold(
@@ -168,6 +170,16 @@ fun ScanScreen(
                     modifier = Modifier.fillMaxSize(),
                     factory = { ctx ->
                         PreviewView(ctx).also { view ->
+                            previewView = view
+                            // Tap to focus on a spot (e.g. the part number line).
+                            @SuppressLint("ClickableViewAccessibility")
+                            view.setOnTouchListener { v, ev ->
+                                if (ev.action == MotionEvent.ACTION_UP) {
+                                    camera?.let { cam -> scope.launch { focusAt(cam, view, ev.x, ev.y) } }
+                                    v.performClick()
+                                }
+                                true
+                            }
                             val future = ProcessCameraProvider.getInstance(ctx)
                             future.addListener({
                                 val provider = future.get()
@@ -188,8 +200,16 @@ fun ScanScreen(
                         .aspectRatio(1.3f)
                         .border(2.dp, Color.White.copy(alpha = 0.8f), RoundedCornerShape(12.dp))
                 )
+                progress?.let {
+                    Text(
+                        it,
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.align(Alignment.Center),
+                    )
+                }
                 Text(
-                    "Fit the label in the box. Tilt the bag a little if the foil glares.",
+                    "Fit the label in the box and hold still. Tap to focus. Tilt the bag a little if the foil glares.",
                     color = Color.White,
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.bodyMedium,
@@ -240,5 +260,55 @@ fun ScanScreen(
                 }
             }
         }
+    }
+}
+
+private const val BURST_FRAMES = 3
+
+/** Focuses and meters on a point of the preview; gives up quietly after a moment. */
+private suspend fun focusAt(camera: Camera, view: PreviewView, x: Float, y: Float) {
+    val point = view.meteringPointFactory.createPoint(x, y)
+    val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
+        .setAutoCancelDuration(4, TimeUnit.SECONDS)
+        .build()
+    try {
+        withTimeoutOrNull(1500) { camera.cameraControl.startFocusAndMetering(action).awaitResult() }
+    } catch (e: Exception) {
+        // Focus not supported or cancelled by a newer request: capture anyway.
+    }
+}
+
+private suspend fun <T> ListenableFuture<T>.awaitResult(): T = suspendCancellableCoroutine { cont ->
+    addListener({
+        try {
+            cont.resume(get())
+        } catch (e: Exception) {
+            cont.resumeWithException(e)
+        }
+    }, Runnable::run)
+}
+
+/** Takes one photo and runs OCR on it. */
+@androidx.annotation.OptIn(ExperimentalGetImage::class)
+private suspend fun captureAndRead(imageCapture: ImageCapture, context: android.content.Context): List<OcrLine> {
+    val proxy = suspendCancellableCoroutine<ImageProxy> { cont ->
+        imageCapture.takePicture(
+            ContextCompat.getMainExecutor(context),
+            object : ImageCapture.OnImageCapturedCallback() {
+                override fun onCaptureSuccess(image: ImageProxy) {
+                    if (cont.isActive) cont.resume(image) else image.close()
+                }
+
+                override fun onError(exception: ImageCaptureException) {
+                    cont.resumeWithException(exception)
+                }
+            },
+        )
+    }
+    try {
+        val media = proxy.image ?: error("Camera returned no image")
+        return OcrEngine.recognize(InputImage.fromMediaImage(media, proxy.imageInfo.rotationDegrees))
+    } finally {
+        proxy.close()
     }
 }

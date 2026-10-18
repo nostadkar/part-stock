@@ -4,8 +4,10 @@
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <uses-permission android:name="android.permission.CAMERA" />
-    <!-- Only used for the optional Mouser price lookup. Scanning and inventory work offline. -->
+    <!-- Only used for the optional Mouser price lookup and the update check. Scanning and inventory work offline. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- In-app update: hands the downloaded APK from this repo's latest release to the system installer. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:allowBackup="true"

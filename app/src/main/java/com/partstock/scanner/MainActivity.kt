@@ -14,6 +14,7 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -22,6 +23,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import com.partstock.scanner.parse.LabelParser
 import com.partstock.scanner.parse.ParsedPart
+import com.partstock.scanner.parse.ScanMerger
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -51,13 +53,27 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
 
+    // Look for a newer build on GitHub at launch (quietly; offline is fine).
+    var update by remember { mutableStateOf<Updater.Release?>(null) }
+    LaunchedEffect(Unit) { update = Updater.autoCheck(context, prefs) }
+    update?.let { r ->
+        UpdateDialog(
+            release = r,
+            onLater = {
+                prefs.dismissedBuild = r.build
+                update = null
+            },
+            onClose = { update = null },
+        )
+    }
+
     when (val s = screen) {
         Screen.Scan -> ScanScreen(
             partCount = partCount,
             onInventory = { screen = Screen.Inventory },
             onSettings = { screen = Screen.Settings },
-            onLines = { lines ->
-                val part = LabelParser.parse(lines)
+            onFrames = { frames ->
+                val part = ScanMerger.merge(frames.map { LabelParser.parse(it) })
                 if (part.rawText.isBlank()) toast("No text found. Move closer and avoid glare.")
                 else screen = Screen.Review(part)
             },
