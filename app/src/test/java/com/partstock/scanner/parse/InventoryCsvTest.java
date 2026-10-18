@@ -137,4 +137,15 @@ public class InventoryCsvTest {
         assertEquals(29, rows.get(2).quantity);
         assertEquals(0.001, rows.get(2).unitCost, 1e-12);
     }
+
+    @Test
+    public void readsMinimumAndLeavesItNullWhenMissing() {
+        String csv = "MPN,Quantity,Minimum\r\nA1,5,20\r\nB2,3,\r\nC3,1,0\r\n";
+        InventoryCsv.Result res = InventoryCsv.read(csv);
+        assertEquals(Integer.valueOf(20), res.rows.get(0).minimum);
+        assertNull(res.rows.get(1).minimum);
+        assertNull(res.rows.get(2).minimum);
+        assertNull(InventoryCsv.read("MPN,Quantity\r\nA1,5\r\n").rows.get(0).minimum);
+        assertEquals("Minimum", InventoryCsv.HEADER.get(InventoryCsv.HEADER.size() - 1));
+    }
 }

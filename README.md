@@ -76,6 +76,11 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   check the list (parts that would go below 0 are flagged), then *Use parts* subtracts per board × boards from every
   part. Kits are learned when you save a bag with its Entrust kit label (kit, per-board Qty and REF DES are stored).
   Counts never go below 0; you're asked to confirm first.
+- **Low stock**: set an optional *Minimum* in a part's edit dialog. Parts at or below it show their count in red,
+  the *Low stock* chip lists them and the summary line counts them. Export → *Reorder list CSV* lists the parts below
+  their minimum with the quantity to order (minimum − on hand, rounded up: exact below 10, then to 5s, 10s, 50s, 100s),
+  MPN, last unit price and link. Its first two columns, *Mouser Part Number* and *Quantity*, are what Mouser's BOM tool
+  asks for; DigiKey parts have their part number in a separate column.
 - **Export** (share icon on the Inventory screen): share or save the inventory CSV, or the scan log CSV
   (every save with the raw OCR text). The CSV opens directly in Google Sheets or Excel.
 - **Backup & restore** (Settings): *Restore from CSV* loads an inventory CSV exported by the app (older exports

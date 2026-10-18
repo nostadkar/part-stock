@@ -66,6 +66,7 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
     var pendingCsv by remember { mutableStateOf("") }
     var bucket by remember { mutableStateOf<String?>(null) } // null = all categories
     var buildingKit by remember { mutableStateOf(false) }
+    var lowOnly by remember { mutableStateOf(false) }
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
 
@@ -81,10 +82,12 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
     }
 
     val counts = remember(parts) { parts.groupingBy { it.category }.eachCount() }
-    val shown = remember(parts, query, bucket) {
+    val lowCount = remember(parts) { parts.count { it.isLow() } }
+    val tracked = remember(parts) { parts.any { it.minQty != null } }
+    val shown = remember(parts, query, bucket, lowOnly) {
         val q = InventoryDb.norm(query)
         parts.filter { p ->
-            (bucket == null || p.category == bucket) &&
+            (bucket == null || p.category == bucket) && (!lowOnly || p.isLow()) &&
                 (q.isEmpty() || listOf(p.mpn, p.description, p.manufacturer, p.location, p.distributorPn, p.customerPn, p.category)
                     .any { InventoryDb.norm(it).contains(q) })
         }
@@ -117,6 +120,19 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
                             pendingCsv = db.inventoryCsv()
                             saveFile.launch(Export.fileName("inventory"))
                         })
+                        DropdownMenuItem(text = { Text("Share reorder list CSV") }, onClick = {
+                            menuOpen = false
+                            if (db.reorderCount() == 0) toast("Nothing is below its minimum")
+                            else Export.share(context, Export.fileName("reorder"), db.reorderCsv())
+                        })
+                        DropdownMenuItem(text = { Text("Save reorder list CSV to file…") }, onClick = {
+                            menuOpen = false
+                            if (db.reorderCount() == 0) toast("Nothing is below its minimum")
+                            else {
+                                pendingCsv = db.reorderCsv()
+                                saveFile.launch(Export.fileName("reorder"))
+                            }
+                        })
                         DropdownMenuItem(text = { Text("Share scan log CSV") }, onClick = {
                             menuOpen = false
                             Export.share(context, Export.fileName("scan-log"), db.logCsv())
@@ -140,12 +156,26 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
-            if (counts.size > 1) {
+            if (counts.size > 1 || tracked) {
                 Row(
                     Modifier.horizontalScroll(rememberScrollState()).padding(top = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    FilterChip(selected = bucket == null, onClick = { bucket = null }, label = { Text("All") })
+                    FilterChip(
+                        selected = bucket == null && !lowOnly,
+                        onClick = {
+                            bucket = null
+                            lowOnly = false
+                        },
+                        label = { Text("All") },
+                    )
+                    if (tracked) {
+                        FilterChip(
+                            selected = lowOnly,
+                            onClick = { lowOnly = !lowOnly },
+                            label = { Text("Low stock ($lowCount)") },
+                        )
+                    }
                     com.partstock.scanner.parse.Categories.ALL.filter { counts.containsKey(it) }.forEach { c ->
                         FilterChip(
                             selected = bucket == c,
@@ -159,6 +189,7 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
                 append("${parts.size} parts · $pieces pieces")
                 if (parts.size > unpriced) append(" · \$${InventoryDb.fmtMoney(value)} value")
                 if (unpriced > 0 && parts.size > unpriced) append(" ($unpriced unpriced)")
+                if (lowCount > 0) append(" · $lowCount low")
             }
             Text(
                 summary,
@@ -197,7 +228,17 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
                                 }
                             }
                             Column(Modifier.padding(start = 12.dp), horizontalAlignment = Alignment.End) {
-                                Text(p.quantity.toString(), style = MaterialTheme.typography.titleLarge)
+                                Text(
+                                    p.quantity.toString(), style = MaterialTheme.typography.titleLarge,
+                                    color = if (p.isLow()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                                )
+                                p.minQty?.let { m ->
+                                    Text(
+                                        "min $m", style = MaterialTheme.typography.bodySmall,
+                                        color = if (p.isLow()) MaterialTheme.colorScheme.error
+                                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                                 p.unitCost?.let { c ->
                                     Text(
                                         "\$${InventoryDb.fmtCost(c)} ea",
@@ -218,8 +259,8 @@ fun InventoryScreen(db: InventoryDb, onBack: () -> Unit) {
         EditDialog(
             part = p,
             onDismiss = { editing = null },
-            onSave = { q, loc, desc, cost, cat, use ->
-                db.update(p.id, q, loc, desc, cost, cat)
+            onSave = { q, loc, desc, cost, cat, use, min ->
+                db.update(p.id, q, loc, desc, cost, cat, min)
                 if (use > 0) {
                     val left = db.use(p.id, use)
                     toast("Used $use · $left left")
@@ -358,7 +399,7 @@ private fun BuildKitDialog(db: InventoryDb, onDismiss: () -> Unit, onBuilt: (Str
 private fun EditDialog(
     part: PartRow,
     onDismiss: () -> Unit,
-    onSave: (Int, String, String, Double?, String, Int) -> Unit,
+    onSave: (Int, String, String, Double?, String, Int, Int?) -> Unit,
     onDelete: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -367,6 +408,7 @@ private fun EditDialog(
     var description by remember { mutableStateOf(part.description) }
     var cost by remember { mutableStateOf(part.unitCost?.let { InventoryDb.fmtCost(it) }.orEmpty()) }
     var category by remember { mutableStateOf(part.category) }
+    var minimum by remember { mutableStateOf(part.minQty?.toString().orEmpty()) }
     var confirmDelete by remember { mutableStateOf(false) }
     var use by remember { mutableIntStateOf(0) }
     var confirmUse by remember { mutableStateOf(false) }
@@ -377,7 +419,7 @@ private fun EditDialog(
         onDismissRequest = onDismiss,
         title = { Text(part.mpn.ifBlank { part.customerPn.ifBlank { part.distributorPn } }) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 val ids = listOf(
                     if (part.distributorPn.isNotBlank()) "${part.distributor.ifBlank { "Dist" }}: ${part.distributorPn}" else "",
                     if (part.customerPn.isNotBlank()) "Cust: ${part.customerPn}" else "",
@@ -421,6 +463,12 @@ private fun EditDialog(
                     )
                 }
                 OutlinedTextField(
+                    minimum, { v -> minimum = v.filter { it.isDigit() }.take(7) },
+                    label = { Text("Minimum (optional)") }, singleLine = true,
+                    supportingText = { Text("Low stock when the count is at or below this") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+                OutlinedTextField(
                     cost, { v -> cost = v.filter { it.isDigit() || it == '.' } }, label = { Text("Unit cost (each)") },
                     singleLine = true, prefix = { Text("$") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -433,7 +481,10 @@ private fun EditDialog(
         confirmButton = {
             TextButton(onClick = {
                 if (use > stock && !confirmUse) confirmUse = true
-                else onSave(stock, location, description, cost.toDoubleOrNull(), category, use)
+                else onSave(
+                    stock, location, description, cost.toDoubleOrNull(), category, use,
+                    minimum.toIntOrNull()?.takeIf { it > 0 },
+                )
             }) { Text(if (confirmUse) "Tap again to save" else "Save") }
         },
         dismissButton = {

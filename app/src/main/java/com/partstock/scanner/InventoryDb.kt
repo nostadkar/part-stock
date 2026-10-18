@@ -8,6 +8,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import com.partstock.scanner.parse.Categories
 import com.partstock.scanner.parse.InventoryCsv
 import com.partstock.scanner.parse.Links
+import com.partstock.scanner.parse.ReorderList
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.LocalDateTime
@@ -33,7 +34,12 @@ data class PartRow(
     val unitCost: Double?,
     val productUrl: String,
     val category: String,
+    /** Low-stock minimum; null = not tracked. */
+    val minQty: Int? = null,
 )
+
+/** At or below its minimum (the Inventory screen's "Low stock" filter). */
+fun PartRow.isLow(): Boolean = ReorderList.isLow(quantity, minQty)
 
 /** Saved link, or one built from the part numbers for rows saved before links existed. */
 fun PartRow.link(): String =
@@ -86,7 +92,7 @@ data class BagHit(val timestamp: String, val quantity: Int, val mode: String)
 data class ImportSummary(val rows: Int, val added: Int, val updated: Int, val removed: Int)
 
 /** Inventory stored on the phone: one row per part, plus a log of every save. */
-class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 5) {
+class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", null, 6) {
 
     /** Called after every change to the parts table (used for auto backup). */
     @Volatile var onChanged: (() -> Unit)? = null
@@ -103,7 +109,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                 date_code TEXT NOT NULL DEFAULT '', ref_des TEXT NOT NULL DEFAULT '',
                 scans INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT '',
                 unit_cost REAL, product_url TEXT NOT NULL DEFAULT '',
-                category TEXT NOT NULL DEFAULT '')"""
+                category TEXT NOT NULL DEFAULT '', min_qty INTEGER)"""
         )
         db.execSQL(
             """CREATE TABLE scan_log (
@@ -147,6 +153,10 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         if (oldVersion < 5) {
             // New table only; nothing existing is touched. Kits fill in as kit labels are scanned.
             createKitItems(db)
+        }
+        if (oldVersion < 6) {
+            // Adds a nullable column only; existing parts have no minimum until one is set.
+            db.execSQL("ALTER TABLE parts ADD COLUMN min_qty INTEGER")
         }
     }
 
@@ -271,6 +281,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                         take("date_code", r.dateCode); take("ref_des", r.refDes)
                         if (r.category.isNotBlank()) put("category", r.category)
                         r.unitCost?.let { put("unit_cost", it) }
+                        r.minimum?.let { put("min_qty", it) }
                         put("scans", r.scans ?: old.scans)
                         put("updated_at", stamp)
                     }, "id = ?", arrayOf(old.id.toString()))
@@ -284,6 +295,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                         put("ref_des", r.refDes); put("scans", r.scans ?: 1); put("updated_at", stamp)
                         put("product_url", r.link); put("category", category)
                         r.unitCost?.let { put("unit_cost", it) }
+                        r.minimum?.let { put("min_qty", it) }
                     })
                     added++
                 }
@@ -320,12 +332,16 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             buildList { while (c.moveToNext()) add(c.toRow()) }
         }
 
-    fun update(id: Long, quantity: Int, location: String, description: String, unitCost: Double?, category: String) {
+    fun update(
+        id: Long, quantity: Int, location: String, description: String, unitCost: Double?, category: String,
+        minQty: Int?,
+    ) {
         val v = ContentValues().apply {
             put("quantity", quantity); put("location", location.trim()); put("category", category)
             put("description", description.trim()); put("updated_at", now())
         }
         if (unitCost != null) v.put("unit_cost", unitCost) else v.putNull("unit_cost")
+        if (minQty != null && minQty > 0) v.put("min_qty", minQty) else v.putNull("min_qty")
         writableDatabase.update("parts", v, "id = ?", arrayOf(id.toString()))
         onChanged?.invoke()
     }
@@ -419,10 +435,23 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                 it.unitCost?.let(::plain).orEmpty(),
                 it.unitCost?.let { c -> plain(c * it.quantity) }.orEmpty(),
                 it.location, it.distributor, it.distributorPn, it.customerPn, it.link(), it.source, it.notes,
-                it.dateCode, it.refDes, it.scans.toString(), it.updatedAt,
+                it.dateCode, it.refDes, it.scans.toString(), it.updatedAt, it.minQty?.toString().orEmpty(),
             )
         }
         return csv(header, rows)
+    }
+
+    /** Parts below their minimum with how many to order; Mouser PN + Quantity columns paste into Mouser's BOM tool. */
+    fun reorderCsv(): String = ReorderList.csv(reorderItems())
+
+    fun reorderCount(): Int = reorderItems().count { ReorderList.orderQuantity(it.onHand, it.minimum) > 0 }
+
+    private fun reorderItems(): List<ReorderList.Item> = all().map { p ->
+        ReorderList.Item().apply {
+            distributor = p.distributor; distributorPn = p.distributorPn; mpn = p.mpn
+            manufacturer = p.manufacturer; description = p.description; link = p.link()
+            onHand = p.quantity; minimum = p.minQty; unitCost = p.unitCost
+        }
     }
 
     fun logCsv(): String {
@@ -452,6 +481,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
 
     private fun Cursor.toRow(): PartRow {
         val costIdx = getColumnIndexOrThrow("unit_cost")
+        val minIdx = getColumnIndexOrThrow("min_qty")
         return PartRow(
             id = getLong(getColumnIndexOrThrow("id")),
             mpn = str("mpn"), description = str("description"), manufacturer = str("manufacturer"),
@@ -462,6 +492,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             unitCost = if (isNull(costIdx)) null else getDouble(costIdx),
             productUrl = str("product_url"),
             category = str("category").ifBlank { Categories.OTHER },
+            minQty = if (isNull(minIdx)) null else getInt(minIdx).takeIf { it > 0 },
         )
     }
 
