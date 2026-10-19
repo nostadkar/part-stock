@@ -198,7 +198,10 @@ app/src/main/java/com/partstock/scanner/
   parse/ScanMerger.java      Votes field by field across a burst of reads
   Updater.kt                 Checks GitHub releases, downloads and installs a newer APK
   ReviewScreen.kt            Edit fields, stock check, save
-  InventoryScreen.kt         List, search, edit, move between bins, delete, export
+  InventoryScreen.kt         List, search, filters, export menu
+  InventoryViewModel.kt      Loads parts/photos/bins on IO, reloads on DB changes, debounced search + filters
+  PartDialogs.kt             Part edit dialog, move between bins, history
+  InventoryTools.kt          Refresh prices, build kit dialogs
   LocationsScreen.kt         Bins with part / piece counts, rename everywhere
   Labels.kt                  QR label PDFs (PdfDocument + ZXing encoder), share / print
   UndoOffer.kt               Undo snackbar after saves

@@ -52,6 +52,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.produceState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -73,7 +80,7 @@ import java.time.LocalDate
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun InventoryScreen(
-    db: InventoryDb,
+    vm: InventoryViewModel,
     secrets: SecretStore,
     onBack: () -> Unit,
     onProjects: () -> Unit = {},
@@ -86,23 +93,46 @@ fun InventoryScreen(
     openPart: Long? = null,
 ) {
     val context = LocalContext.current
-    var version by remember { mutableIntStateOf(0) } // bump to reload after edits
-    val parts = remember(version) { db.all() }
-    val photos = remember(version) { db.allPhotos() }
+    val db = vm.db
+    // Parts, photos and filters come from the ViewModel, loaded and filtered off the main thread.
+    remember(bin) { vm.bin.value = bin }
+    DisposableEffect(Unit) { onDispose { vm.clearFilters() } }
+    val view by vm.view.collectAsStateWithLifecycle()
+    val parts = view.parts
+    val photos = view.photos
+    val bucket by vm.bucket.collectAsStateWithLifecycle()
+    val lowOnly by vm.lowOnly.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
-    var query by remember { mutableStateOf("") }
+    var query by remember { mutableStateOf(vm.query.value) }
     var menuOpen by remember { mutableStateOf(false) }
-    var editing by remember { mutableStateOf<PartRow?>(openPart?.let { id -> parts.firstOrNull { it.id == id } }) }
+    var editingId by remember { mutableStateOf(openPart) }
+    // Follows the latest copy of the part, and closes when it's gone (e.g. undone).
+    val data by vm.data.collectAsStateWithLifecycle()
+    val editing = editingId?.let { id -> data.parts.firstOrNull { it.id == id } }
+    LaunchedEffect(data.loaded, editing == null) {
+        if (data.loaded && editingId != null && editing == null) editingId = null
+    }
     var labels by remember { mutableStateOf<List<LabelItem>?>(null) }
     var history by remember { mutableStateOf<PartRow?>(null) }
     var pendingCsv by remember { mutableStateOf("") }
-    var bucket by remember { mutableStateOf<String?>(null) } // null = all categories
     var buildingKit by remember { mutableStateOf(false) }
-    var lowOnly by remember { mutableStateOf(false) }
     var refreshing by remember { mutableStateOf(false) }
     var importingOrder by remember { mutableStateOf(false) }
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+
+    /** Builds a CSV on IO, then hands it over on the main thread. */
+    fun withCsv(build: () -> String, then: (String) -> Unit) {
+        scope.launch {
+            val csv = try {
+                withContext(Dispatchers.IO) { build() }
+            } catch (e: Exception) {
+                toast("Export failed: ${e.message}")
+                return@launch
+            }
+            then(csv)
+        }
+    }
 
     var zipping by remember { mutableStateOf(false) }
     val saveZip = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
@@ -131,22 +161,14 @@ fun InventoryScreen(
         }
     }
 
-    val counts = remember(parts) { parts.groupingBy { it.category }.eachCount() }
-    val lowCount = remember(parts) { parts.count { it.isLow() } }
-    val tracked = remember(parts) { parts.any { it.minQty != null } }
-    val shown = remember(parts, query, bucket, lowOnly, bin) {
-        parts.filter { p ->
-            (bucket == null || p.category == bucket) && (!lowOnly || p.isLow()) && (query.isBlank() || p.matches(query)) &&
-                (bin == null || Locations.keyOf(p.bins(), bin) != null)
-        }
-    }
-    val groups = remember(shown) {
-        val order = com.partstock.scanner.parse.Categories.ALL
-        shown.groupBy { it.category }.toList().sortedBy { (c, _) -> order.indexOf(c).let { if (it < 0) 999 else it } }
-    }
-    val pieces = parts.sumOf { it.quantity }
-    val value = parts.sumOf { (it.unitCost ?: 0.0) * it.quantity }
-    val unpriced = parts.count { it.unitCost == null }
+    val counts = view.counts
+    val lowCount = view.lowCount
+    val tracked = view.tracked
+    val shown = view.shown
+    val groups = view.groups
+    val pieces = view.pieces
+    val value = view.value
+    val unpriced = view.unpriced
 
     Scaffold(
         topBar = {
@@ -176,12 +198,14 @@ fun InventoryScreen(
                         })
                         DropdownMenuItem(text = { Text("Share inventory CSV") }, onClick = {
                             menuOpen = false
-                            Export.share(context, Export.fileName("inventory"), db.inventoryCsv())
+                            withCsv(db::inventoryCsv) { Export.share(context, Export.fileName("inventory"), it) }
                         })
                         DropdownMenuItem(text = { Text("Save inventory CSV to file…") }, onClick = {
                             menuOpen = false
-                            pendingCsv = db.inventoryCsv()
-                            saveFile.launch(Export.fileName("inventory"))
+                            withCsv(db::inventoryCsv) {
+                                pendingCsv = it
+                                saveFile.launch(Export.fileName("inventory"))
+                            }
                         })
                         DropdownMenuItem(text = { Text("Share inventory + photos (zip)") }, enabled = !zipping, onClick = {
                             menuOpen = false
@@ -208,25 +232,31 @@ fun InventoryScreen(
                         }
                         DropdownMenuItem(text = { Text("Share reorder list CSV") }, onClick = {
                             menuOpen = false
-                            if (db.reorderCount() == 0) toast("Nothing is below its minimum")
-                            else Export.share(context, Export.fileName("reorder"), db.reorderCsv())
+                            withCsv({ if (db.reorderCount() == 0) "" else db.reorderCsv() }) { csv ->
+                                if (csv.isEmpty()) toast("Nothing is below its minimum")
+                                else Export.share(context, Export.fileName("reorder"), csv)
+                            }
                         })
                         DropdownMenuItem(text = { Text("Save reorder list CSV to file…") }, onClick = {
                             menuOpen = false
-                            if (db.reorderCount() == 0) toast("Nothing is below its minimum")
-                            else {
-                                pendingCsv = db.reorderCsv()
-                                saveFile.launch(Export.fileName("reorder"))
+                            withCsv({ if (db.reorderCount() == 0) "" else db.reorderCsv() }) { csv ->
+                                if (csv.isEmpty()) toast("Nothing is below its minimum")
+                                else {
+                                    pendingCsv = csv
+                                    saveFile.launch(Export.fileName("reorder"))
+                                }
                             }
                         })
                         DropdownMenuItem(text = { Text("Share scan log CSV") }, onClick = {
                             menuOpen = false
-                            Export.share(context, Export.fileName("scan-log"), db.logCsv())
+                            withCsv(db::logCsv) { Export.share(context, Export.fileName("scan-log"), it) }
                         })
                         DropdownMenuItem(text = { Text("Save scan log CSV to file…") }, onClick = {
                             menuOpen = false
-                            pendingCsv = db.logCsv()
-                            saveFile.launch(Export.fileName("scan-log"))
+                            withCsv(db::logCsv) {
+                                pendingCsv = it
+                                saveFile.launch(Export.fileName("scan-log"))
+                            }
                         })
                     }
                 },
@@ -236,7 +266,10 @@ fun InventoryScreen(
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
             OutlinedTextField(
                 value = query,
-                onValueChange = { query = it },
+                onValueChange = {
+                    query = it
+                    vm.query.value = it // filtered (debounced) in the ViewModel
+                },
                 placeholder = { Text("Search part, value, package, bin") },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 singleLine = true,
@@ -258,22 +291,22 @@ fun InventoryScreen(
                     FilterChip(
                         selected = bucket == null && !lowOnly,
                         onClick = {
-                            bucket = null
-                            lowOnly = false
+                            vm.bucket.value = null
+                            vm.lowOnly.value = false
                         },
                         label = { Text("All") },
                     )
                     if (tracked) {
                         FilterChip(
                             selected = lowOnly,
-                            onClick = { lowOnly = !lowOnly },
+                            onClick = { vm.lowOnly.value = !lowOnly },
                             label = { Text("Low stock ($lowCount)") },
                         )
                     }
                     com.partstock.scanner.parse.Categories.ALL.filter { counts.containsKey(it) }.forEach { c ->
                         FilterChip(
                             selected = bucket == c,
-                            onClick = { bucket = if (bucket == c) null else c },
+                            onClick = { vm.bucket.value = if (bucket == c) null else c },
                             label = { Text("$c (${counts[c]})") },
                         )
                     }
@@ -291,7 +324,11 @@ fun InventoryScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(vertical = 8.dp),
             )
-            if (parts.isEmpty()) {
+            if (!view.loaded) {
+                Box(Modifier.fillMaxWidth().padding(top = 24.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            } else if (parts.isEmpty()) {
                 Text("Nothing yet. Scan a label to add your first part.", modifier = Modifier.padding(top = 24.dp))
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -305,7 +342,7 @@ fun InventoryScreen(
                     )
                 }
                 items(rows, key = { it.id }) { p ->
-                    Card(Modifier.fillMaxWidth().clickable { editing = p }) {
+                    Card(Modifier.fillMaxWidth().clickable { editingId = p.id }) {
                         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                             photos[p.id]?.firstOrNull()?.let { f ->
                                 PhotoThumb(f, 48.dp, Modifier.padding(end = 12.dp))
@@ -371,33 +408,38 @@ fun InventoryScreen(
     editing?.let { p ->
         EditDialog(
             part = p,
-            onDismiss = { editing = null },
+            onDismiss = { editingId = null },
             onSave = { stock, loc, desc, cost, cat, use, min ->
-                // The edit and the use are one change for Undo.
-                val left = db.grouped {
-                    db.update(p.id, stock, loc, desc, cost, cat, min)
-                    if (use > 0) db.use(p.id, use) else null
+                editingId = null
+                scope.launch {
+                    // The edit and the use are one change for Undo.
+                    val left = withContext(Dispatchers.IO) {
+                        db.grouped {
+                            db.update(p.id, stock, loc, desc, cost, cat, min)
+                            if (use > 0) db.use(p.id, use) else null
+                        }
+                    }
+                    UndoOffer.offer(context, if (use > 0) "Used $use · $left left" else "Saved ${p.key()}", db.lastChange)
                 }
-                editing = null
-                version++
-                UndoOffer.offer(context, if (use > 0) "Used $use · $left left" else "Saved ${p.key()}", db.lastChange)
             },
             onDelete = {
-                db.delete(p.id)
-                editing = null
-                version++
-                UndoOffer.offer(context, "Deleted ${p.key()}", db.lastChange)
+                editingId = null
+                scope.launch {
+                    withContext(Dispatchers.IO) { db.delete(p.id) }
+                    UndoOffer.offer(context, "Deleted ${p.key()}", db.lastChange)
+                }
             },
             onHistory = { history = p },
-            photos = { PartPhotosRow(db, p.id, onChanged = { version++ }) },
-            knownBins = remember(version) { db.locations().map { it.name } },
+            photos = { PartPhotosRow(db, p.id) },
+            knownBins = data.locations.map { it.name },
             onLabel = if (prefs != null) ({ labels = listOf(partLabel(p)) }) else null,
             onMove = { from, to, n ->
-                val moved = db.move(p.id, from, to, n) ?: 0
-                editing = null
-                version++
-                if (moved > 0) UndoOffer.offer(context, "Moved $moved from $from to ${Locations.normalize(to)}", db.lastChange)
-                else toast("Nothing to move")
+                editingId = null
+                scope.launch {
+                    val moved = withContext(Dispatchers.IO) { db.move(p.id, from, to, n) } ?: 0
+                    if (moved > 0) UndoOffer.offer(context, "Moved $moved from $from to ${Locations.normalize(to)}", db.lastChange)
+                    else toast("Nothing to move")
+                }
             },
         )
     }
@@ -412,10 +454,8 @@ fun InventoryScreen(
         RefreshPricesDialog(
             db = db,
             secrets = secrets,
-            onClose = { changed ->
-                refreshing = false
-                if (changed) version++
-            },
+            parts = parts,
+            onClose = { refreshing = false },
         )
     }
 
@@ -424,10 +464,7 @@ fun InventoryScreen(
             db = db,
             onClose = { msg ->
                 importingOrder = false
-                if (msg != null) {
-                    version++
-                    UndoOffer.offer(context, msg, db.lastChange)
-                }
+                if (msg != null) UndoOffer.offer(context, msg, db.lastChange)
             },
         )
     }
@@ -438,518 +475,8 @@ fun InventoryScreen(
             onDismiss = { buildingKit = false },
             onBuilt = { msg ->
                 buildingKit = false
-                version++
                 UndoOffer.offer(context, msg, db.lastChange)
             },
         )
     }
-}
-
-/**
- * Looks up every part with a Mouser part number, one request every couple of seconds (Mouser allows about 30 a
- * minute), and updates price, description, link and category (unless picked by hand). Stops on a rate-limit or key
- * error; parts done so far stay updated.
- */
-@Composable
-private fun RefreshPricesDialog(db: InventoryDb, secrets: SecretStore, onClose: (Boolean) -> Unit) {
-    val scope = rememberCoroutineScope()
-    val key = remember { secrets.getMouserKey() }
-    val targets = remember { db.all().filter { PriceRefresh.hasMouserPn(it.distributor, it.distributorPn, it.productUrl) } }
-    var job by remember { mutableStateOf<Job?>(null) }
-    var done by remember { mutableIntStateOf(0) }
-    var updated by remember { mutableIntStateOf(0) }
-    var notFound by remember { mutableIntStateOf(0) }
-    var failed by remember { mutableIntStateOf(0) }
-    var result by remember { mutableStateOf<String?>(null) }
-    val running = job != null && result == null
-
-    fun start(k: String) {
-        job = scope.launch {
-            var stopped: String? = null
-            for ((i, p) in targets.withIndex()) {
-                if (i > 0) delay(PriceRefresh.MOUSER_PACE_MS)
-                try {
-                    val r = MouserApi.lookup(k, p.distributorPn.trim(), maxOf(1, p.quantity))
-                    if (r == null) {
-                        notFound++
-                    } else {
-                        val cat = Categories.classify(r.category, r.description, p.description)
-                        withContext(Dispatchers.IO) {
-                            db.applyLookup(
-                                p.id,
-                                LookupUpdate(r.unitPrice, r.description, cat, r.url, "Mouser", r.datasheetUrl, r.specs),
-                            )
-                        }
-                        updated++
-                    }
-                } catch (e: MouserException) {
-                    if (e.rateLimited || e.badKey) {
-                        stopped = e.message ?: "Mouser error"
-                        break
-                    }
-                    failed++
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    failed++
-                }
-                done = i + 1
-            }
-            if (updated > 0) withContext(Dispatchers.IO) { db.notifyChanged() }
-            result = PriceRefresh.summary(updated, notFound, failed, stopped, targets.size - done)
-        }
-    }
-
-    fun stop() {
-        job?.cancel()
-        if (updated > 0) db.notifyChanged()
-        result = PriceRefresh.summary(updated, notFound, failed, "you stopped it", targets.size - done)
-    }
-
-    AlertDialog(
-        onDismissRequest = { if (!running) onClose(updated > 0) },
-        title = { Text("Refresh prices") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                when {
-                    key == null -> Text("Add a Mouser API key in Settings first.")
-                    targets.isEmpty() -> Text("No parts have a Mouser part number.")
-                    result != null -> Text(result.orEmpty())
-                    running -> {
-                        Text("Checking ${done + 1} of ${targets.size}…")
-                        LinearProgressIndicator(
-                            progress = { done.toFloat() / targets.size },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Text(
-                            "Updated $updated so far. One request every ${PriceRefresh.MOUSER_PACE_MS / 1000.0} s " +
-                                "to stay under Mouser's limit.",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                    else -> {
-                        val secs = targets.size * PriceRefresh.MOUSER_PACE_MS / 1000
-                        Text(
-                            "Looks up ${targets.size} part${if (targets.size == 1) "" else "s"} with a Mouser part number " +
-                                "and updates unit cost, description and category (categories you picked stay). " +
-                                "Takes about ${if (secs < 90) "$secs seconds" else "${(secs + 59) / 60} minutes"}; " +
-                                "keep this screen open.",
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            when {
-                key != null && targets.isNotEmpty() && job == null ->
-                    TextButton(onClick = { start(key) }) { Text("Start") }
-                running -> TextButton(onClick = ::stop) { Text("Stop") }
-                else -> TextButton(onClick = { onClose(updated > 0) }) { Text("Close") }
-            }
-        },
-        dismissButton = {
-            if (job == null) TextButton(onClick = { onClose(false) }) { Text("Cancel") }
-        },
-    )
-}
-
-/** Pick a kit, enter how many boards, check the list, then subtract everything at once. */
-@Composable
-private fun BuildKitDialog(db: InventoryDb, onDismiss: () -> Unit, onBuilt: (String) -> Unit) {
-    val kits = remember { db.kits() }
-    var kit by remember { mutableStateOf(kits.firstOrNull()?.kit) }
-    var boardsText by remember { mutableStateOf("1") }
-    var confirmShort by remember { mutableStateOf(false) }
-    val boards = boardsText.toIntOrNull() ?: 0
-    val plan = remember(kit, boards) { kit?.let { if (boards > 0) db.kitPlan(it, boards) else emptyList() }.orEmpty() }
-    val short = plan.filter { it.after < 0 }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Build kit") },
-        text = {
-            if (kits.isEmpty()) {
-                Text(
-                    "No kits yet. Save a bag with its Entrust kit label and the app remembers which kit it belongs to, " +
-                        "how many go on each board and the ref des.",
-                )
-            } else Column(
-                Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                kits.forEach { k ->
-                    FilterChip(
-                        selected = kit == k.kit,
-                        onClick = {
-                            kit = k.kit
-                            confirmShort = false
-                        },
-                        label = {
-                            Text("${k.kit} · ${k.parts} part${if (k.parts == 1) "" else "s"}" +
-                                (k.kitQuantity?.let { " · label qty $it" } ?: ""))
-                        },
-                    )
-                }
-                OutlinedTextField(
-                    boardsText,
-                    { v ->
-                        boardsText = v.filter { it.isDigit() }.take(5)
-                        confirmShort = false
-                    },
-                    label = { Text("Boards") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                )
-                plan.forEach { line ->
-                    val p = line.part
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                p.mpn.ifBlank { p.customerPn.ifBlank { p.distributorPn } },
-                                fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold,
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                            Text(
-                                "${line.perBoard} × $boards = ${line.need}" +
-                                    (if (line.refDes.isNotBlank()) " · ${line.refDes}" else ""),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 2,
-                            )
-                        }
-                        Text(
-                            "${p.quantity} → ${line.after}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (line.after < 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.padding(start = 8.dp),
-                        )
-                    }
-                }
-                if (short.isNotEmpty()) {
-                    Text(
-                        "${short.size} part${if (short.size == 1) "" else "s"} would go below 0; " +
-                            "they'll be set to 0. Recount those bags.",
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            if (kits.isNotEmpty()) {
-                TextButton(
-                    enabled = kit != null && boards > 0 && plan.isNotEmpty(),
-                    onClick = {
-                        val k = kit
-                        if (k != null) {
-                            if (short.isNotEmpty() && !confirmShort) {
-                                confirmShort = true
-                            } else {
-                                db.buildKit(k, boards)
-                                onBuilt("Used parts for $boards board${if (boards == 1) "" else "s"} of $k")
-                            }
-                        }
-                    },
-                ) {
-                    Text(if (confirmShort) "Tap again to use anyway" else "Use parts")
-                }
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(if (kits.isEmpty()) "OK" else "Cancel") } },
-    )
-}
-
-@Composable
-private fun EditDialog(
-    part: PartRow,
-    onDismiss: () -> Unit,
-    /** Pieces per bin, main bin, description, cost, category, pieces to use, minimum. */
-    onSave: (Map<String, Int>, String, String, Double?, String, Int, Int?) -> Unit,
-    onDelete: () -> Unit,
-    knownBins: List<String> = emptyList(),
-    onMove: (from: String, to: String, qty: Int) -> Unit = { _, _, _ -> },
-    /** Make a QR label for this part; null hides the button. */
-    onLabel: (() -> Unit)? = null,
-    onHistory: (() -> Unit)? = null,
-    /** The part's photos strip; null hides it. */
-    photos: (@Composable () -> Unit)? = null,
-) {
-    val context = LocalContext.current
-    val startBins = remember { part.bins() }
-    val multi = startBins.size > 1
-    // One bin: the usual Quantity + Bin fields. Several bins: a count per bin, and the main bin stays as it is.
-    var qty by remember { mutableStateOf(part.quantity.toString()) }
-    val binQty = remember { mutableStateListOf(*startBins.values.map { it.toString() }.toTypedArray()) }
-    var moving by remember { mutableStateOf(false) }
-    // With one bin, edit that bin's name (it can differ from the main bin after the main bin was emptied).
-    var location by remember { mutableStateOf(if (multi) part.location else Locations.plain(startBins.keys.first())) }
-    var description by remember { mutableStateOf(part.description) }
-    var cost by remember { mutableStateOf(part.unitCost?.let { InventoryDb.fmtCost(it) }.orEmpty()) }
-    var category by remember { mutableStateOf(part.category) }
-    var minimum by remember { mutableStateOf(part.minQty?.toString().orEmpty()) }
-    var confirmDelete by remember { mutableStateOf(false) }
-    var use by remember { mutableIntStateOf(0) }
-    var confirmUse by remember { mutableStateOf(false) }
-    val link = part.link()
-    val stock = if (multi) startBins.values.withIndex().sumOf { (i, q) -> binQty[i].toIntOrNull() ?: q }
-        else qty.toIntOrNull() ?: part.quantity
-    fun stockMap(): Map<String, Int> =
-        if (multi) startBins.keys.withIndex().associate { (i, b) -> b to (binQty[i].toIntOrNull() ?: startBins.getValue(b)) }
-        else mapOf(Locations.normalize(location) to stock)
-    // "Price from Mouser, Oct 18", shown while the cost is the one that lookup saved.
-    val priceLabel = remember { PriceRefresh.label(part.priceSource, part.priceCheckedAt, LocalDate.now()) }
-    val savedCost = remember { part.unitCost?.let { InventoryDb.fmtCost(it) }.orEmpty() }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(part.mpn.ifBlank { part.customerPn.ifBlank { part.distributorPn } }) },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                val ids = listOf(
-                    if (part.distributorPn.isNotBlank()) "${part.distributor.ifBlank { "Dist" }}: ${part.distributorPn}" else "",
-                    if (part.customerPn.isNotBlank()) "Cust: ${part.customerPn}" else "",
-                ).filter { it.isNotBlank() }.joinToString(" · ")
-                if (ids.isNotBlank()) Text(ids, style = MaterialTheme.typography.bodySmall)
-                val chips = part.specs().chips()
-                if (chips.isNotEmpty()) SpecChips(chips)
-                Row(Modifier.horizontalScroll(rememberScrollState())) {
-                    if (link.isNotBlank()) {
-                        TextButton(onClick = { openLink(context, link) }) { Text("Open on ${Links.siteName(link)}") }
-                    }
-                    val sheet = part.datasheet()
-                    if (sheet.isNotBlank()) {
-                        TextButton(onClick = { openLink(context, sheet) }) {
-                            Text(if (Links.isDatasheetSearch(sheet)) "Find datasheet" else "Datasheet")
-                        }
-                    }
-                    if (onLabel != null) TextButton(onClick = onLabel) { Text("Label") }
-                    if (onHistory != null) TextButton(onClick = onHistory) { Text("History") }
-                }
-                photos?.invoke()
-                OutlinedTextField(description, { description = it }, label = { Text("Description") })
-                CategoryPicker(category) { category = it }
-                if (multi) {
-                    Text("Stock by bin · total $stock", style = MaterialTheme.typography.titleSmall)
-                    startBins.keys.forEachIndexed { i, b ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                b + if (Locations.same(b, part.location)) " (main)" else "",
-                                modifier = Modifier.weight(1f),
-                            )
-                            OutlinedTextField(
-                                binQty[i], { v -> binQty[i] = v.filter { it.isDigit() }.take(7) }, singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                modifier = Modifier.width(110.dp),
-                            )
-                        }
-                    }
-                } else {
-                    OutlinedTextField(
-                        qty, { v -> qty = v.filter { it.isDigit() } }, label = { Text("Quantity") }, singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    )
-                }
-                TextButton(onClick = { moving = true }) {
-                    Text(if (multi) "Move between bins…" else "Move some to another bin…")
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Use", modifier = Modifier.width(40.dp))
-                    IconButton(onClick = {
-                        use = maxOf(0, use - 1)
-                        confirmUse = false
-                    }) { Icon(Icons.Filled.Remove, contentDescription = "Use fewer") }
-                    OutlinedTextField(
-                        if (use == 0) "" else use.toString(),
-                        { v ->
-                            use = v.filter { it.isDigit() }.take(6).toIntOrNull() ?: 0
-                            confirmUse = false
-                        },
-                        placeholder = { Text("0") }, singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.width(88.dp),
-                    )
-                    IconButton(onClick = {
-                        use += 1
-                        confirmUse = false
-                    }) { Icon(Icons.Filled.Add, contentDescription = "Use more") }
-                }
-                if (use > 0) {
-                    Text(
-                        if (use > stock) "Only $stock in stock; saving sets it to 0." else "After use: ${stock - use}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (use > stock) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                OutlinedTextField(
-                    minimum, { v -> minimum = v.filter { it.isDigit() }.take(7) },
-                    label = { Text("Minimum (optional)") }, singleLine = true,
-                    supportingText = { Text("Low stock when the count is at or below this") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                )
-                OutlinedTextField(
-                    cost, { v -> cost = v.filter { it.isDigit() || it == '.' } }, label = { Text("Unit cost (each)") },
-                    singleLine = true, prefix = { Text("$") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    supportingText = if (priceLabel.isNotBlank() && cost == savedCost) {
-                        { Text(priceLabel) }
-                    } else null,
-                )
-                if (!multi) {
-                    OutlinedTextField(location, { location = it }, label = { Text("Bin / location") }, singleLine = true)
-                }
-                if (part.notes.isNotBlank()) Text("Notes: ${part.notes}", style = MaterialTheme.typography.bodySmall)
-                Text("Scanned ${part.scans}× · updated ${part.updatedAt}", style = MaterialTheme.typography.bodySmall)
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                if (use > stock && !confirmUse) confirmUse = true
-                else onSave(
-                    stockMap(), location, description, cost.toDoubleOrNull(), category, use,
-                    minimum.toIntOrNull()?.takeIf { it > 0 },
-                )
-            }) { Text(if (confirmUse) "Tap again to save" else "Save") }
-        },
-        dismissButton = {
-            TextButton(onClick = { if (confirmDelete) onDelete() else confirmDelete = true }) {
-                Text(if (confirmDelete) "Tap again to delete" else "Delete", color = MaterialTheme.colorScheme.error)
-            }
-        },
-    )
-
-    if (moving) {
-        MoveDialog(
-            bins = startBins,
-            knownBins = knownBins,
-            onDismiss = { moving = false },
-            onMove = { from, to, n ->
-                moving = false
-                onMove(from, to, n)
-            },
-        )
-    }
-}
-
-/** Move N pieces of one part from one of its bins to another bin (new or existing). Saves straight away. */
-@Composable
-private fun MoveDialog(
-    bins: Map<String, Int>,
-    knownBins: List<String>,
-    onDismiss: () -> Unit,
-    onMove: (String, String, Int) -> Unit,
-) {
-    val sources = bins.filterValues { it > 0 }.keys.toList()
-    var from by remember { mutableStateOf(sources.firstOrNull()) }
-    var to by remember { mutableStateOf("") }
-    var qtyText by remember { mutableStateOf(sources.firstOrNull()?.let { bins[it]?.toString() }.orEmpty()) }
-    val have = from?.let { bins[it] } ?: 0
-    val n = qtyText.toIntOrNull() ?: 0
-    val ok = from != null && to.isNotBlank() && n in 1..have && !Locations.same(from, to)
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Move stock") },
-        text = {
-            if (sources.isEmpty()) {
-                Text("Nothing in stock to move.")
-            } else Column(
-                Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text("From", style = MaterialTheme.typography.titleSmall)
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    sources.forEach { b ->
-                        FilterChip(
-                            selected = from == b,
-                            onClick = {
-                                from = b
-                                qtyText = bins[b]?.toString().orEmpty()
-                            },
-                            label = { Text("$b · ${bins[b]}") },
-                        )
-                    }
-                }
-                OutlinedTextField(
-                    qtyText, { v -> qtyText = v.filter { it.isDigit() }.take(7) },
-                    label = { Text("How many") }, singleLine = true,
-                    supportingText = { Text(if (n > have) "Only $have in $from" else "$have in $from") },
-                    isError = n > have,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                )
-                OutlinedTextField(to, { to = it }, label = { Text("To bin") }, singleLine = true)
-                val others = knownBins.filter { k -> from == null || !Locations.same(k, from) }
-                if (others.isNotEmpty()) {
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        others.forEach { b ->
-                            FilterChip(selected = Locations.same(b, to) && to.isNotBlank(), onClick = { to = b }, label = { Text(b) })
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(enabled = ok, onClick = { from?.let { onMove(it, to.trim(), n) } }) { Text("Move") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
-}
-
-private fun PartRow.key() = mpn.ifBlank { customerPn.ifBlank { distributorPn } }
-
-/** Every change to the part, newest first: date, what happened, old → new quantity and what else changed. */
-@Composable
-private fun HistoryDialog(db: InventoryDb, part: PartRow, onDismiss: () -> Unit) {
-    val entries = remember { db.history(part) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("History · ${part.key()}") },
-        text = {
-            Column(
-                Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                if (entries.isEmpty()) Text("No changes recorded yet.")
-                entries.forEach { h ->
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                historyAction(h.action) + if (h.undone) " (undone)" else "",
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.weight(1f),
-                            )
-                            val qty = when {
-                                h.qtyBefore != null && h.qtyAfter != null && h.qtyBefore != h.qtyAfter -> "${h.qtyBefore} → ${h.qtyAfter}"
-                                h.qtyAfter != null -> "${h.qtyAfter}"
-                                h.qtyBefore != null -> "${h.qtyBefore} → –"
-                                else -> ""
-                            }
-                            Text(qty, style = MaterialTheme.typography.bodyMedium)
-                        }
-                        Text(
-                            h.ts + if (h.legacy) " · from scan log" else "",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        if (h.summary.isNotBlank()) Text(h.summary, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
-    )
-}
-
-private fun historyAction(a: String): String = when {
-    a == "add" || a == "scan add" -> "Scan · add"
-    a == "set" || a == "scan set" -> "Scan · set count"
-    a == "use" -> "Used"
-    a.startsWith("use · ") -> "Used · " + a.removePrefix("use · ")
-    a == "edit" -> "Edited"
-    a == "move" -> "Moved"
-    a == "rename bin" -> "Bin renamed"
-    a == "delete" -> "Deleted"
-    a == "undo" -> "Undo"
-    a.startsWith("lookup") -> "Lookup" + a.removePrefix("lookup").let { if (it.isBlank()) "" else " ·$it" }
-    a == "import" -> "CSV import"
-    a == "restore" -> "CSV restore"
-    a == "undone" -> "Scan (undone)"
-    else -> a.replaceFirstChar { it.uppercase() }
 }

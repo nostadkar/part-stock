@@ -42,7 +42,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,6 +72,7 @@ fun ProjectsScreen(db: InventoryDb, onBack: () -> Unit) {
     var pendingBom by remember { mutableStateOf<Pair<String, BomCsv.Bom>?>(null) }
     var bomError by remember { mutableStateOf<String?>(null) }
     var pickingKit by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
 
@@ -93,8 +99,14 @@ fun ProjectsScreen(db: InventoryDb, onBack: () -> Unit) {
         return
     }
 
-    val projects = remember(version) { db.projects() }
-    val stock = remember(version) { db.planStock() }
+    // Each project with how many boards the stock builds; read on IO (null while loading).
+    val listed by produceState<List<Pair<ProjectSummary, BuildPlan.Result>>?>(null, version) {
+        value = withContext(Dispatchers.IO) {
+            val stock = db.planStock()
+            db.projects().map { p -> p to BuildPlan.plan(db.projectLines(p.id).map { it.toReq() }, stock, 1) }
+        }
+    }
+    val projects = listed.orEmpty()
 
     Scaffold(
         topBar = {
@@ -118,7 +130,7 @@ fun ProjectsScreen(db: InventoryDb, onBack: () -> Unit) {
             Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (projects.isEmpty()) {
+            if (listed != null && projects.isEmpty()) {
                 item {
                     Text(
                         "No projects yet. Import a BOM CSV (upload icon: KiCad's BOM export, or any CSV with MPN or " +
@@ -129,8 +141,7 @@ fun ProjectsScreen(db: InventoryDb, onBack: () -> Unit) {
                     )
                 }
             }
-            items(projects, key = { it.id }) { p ->
-                val plan = remember(p.id, version) { BuildPlan.plan(db.projectLines(p.id).map { it.toReq() }, stock, 1) }
+            items(projects, key = { it.first.id }) { (p, plan) ->
                 Card(Modifier.fillMaxWidth().clickable { openId = p.id }) {
                     Column(Modifier.padding(12.dp)) {
                         Text(p.name, style = MaterialTheme.typography.titleMedium)
@@ -182,8 +193,9 @@ fun ProjectsScreen(db: InventoryDb, onBack: () -> Unit) {
     }
 
     if (pickingKit) {
-        val kits = remember { db.kits() }
-        AlertDialog(
+        val kitsOrNull by produceState<List<KitSummary>?>(null) { value = withContext(Dispatchers.IO) { db.kits() } }
+        val kits = kitsOrNull.orEmpty()
+        if (kitsOrNull != null) AlertDialog(
             onDismissRequest = { pickingKit = false },
             title = { Text("Project from a kit") },
             text = {
@@ -192,10 +204,14 @@ fun ProjectsScreen(db: InventoryDb, onBack: () -> Unit) {
                 } else Column(Modifier.verticalScroll(rememberScrollState())) {
                     kits.forEach { k ->
                         TextButton(onClick = {
-                            val (lines, ids) = db.kitAsBom(k.kit)
                             pickingKit = false
-                            if (lines.isEmpty()) toast("That kit has no parts in stock")
-                            else openId = db.createProject(k.kit, "Kit", lines, ids)
+                            scope.launch {
+                                val made = withContext(Dispatchers.IO) {
+                                    val (lines, ids) = db.kitAsBom(k.kit)
+                                    if (lines.isEmpty()) null else db.createProject(k.kit, "Kit", lines, ids)
+                                }
+                                if (made == null) toast("That kit has no parts in stock") else openId = made
+                            }
                         }) { Text("${k.kit} · ${k.parts} part${if (k.parts == 1) "" else "s"}") }
                     }
                 }
@@ -215,13 +231,18 @@ private fun buildableText(plan: BuildPlan.Result): String = when {
 private fun ProjectDetail(db: InventoryDb, id: Long, onBack: () -> Unit) {
     val context = LocalContext.current
     var version by remember { mutableIntStateOf(0) }
-    val project = remember(version) { db.project(id) }
+    // Project, its lines and the stock, read on IO; null only before the first read.
+    val detail by produceState<Triple<ProjectSummary?, List<ProjectLine>, List<BuildPlan.Stock>>?>(null, version) {
+        value = withContext(Dispatchers.IO) { Triple(db.project(id), db.projectLines(id), db.planStock()) }
+    }
+    val loaded = detail ?: return
+    val project = loaded.first
     if (project == null) {
         LaunchedEffect(Unit) { onBack() }
         return
     }
-    val lines = remember(version) { db.projectLines(id) }
-    val stock = remember(version) { db.planStock() }
+    val lines = loaded.second
+    val stock = loaded.third
     var boardsText by remember { mutableStateOf("1") }
     val boards = boardsText.toIntOrNull() ?: 0
     val reqs = remember(lines) { lines.map { it.toReq() } }
@@ -428,9 +449,9 @@ private fun partLabel(s: BuildPlan.Stock): String = s.mpn.ifBlank { s.customerPn
 /** Choose the stock part for a BOM line, with the inventory search pre-filled from its value and footprint. */
 @Composable
 private fun PickPartDialog(db: InventoryDb, line: ProjectLine, onDismiss: () -> Unit, onPick: (Long?) -> Unit) {
-    val parts = remember { db.all() }
+    val parts by produceState(emptyList<PartRow>()) { value = withContext(Dispatchers.IO) { db.all() } }
     var query by remember { mutableStateOf(line.toBomLine().searchHint()) }
-    val shown = remember(query) { if (query.isBlank()) parts else parts.filter { it.matches(query) } }
+    val shown = remember(query, parts) { if (query.isBlank()) parts else parts.filter { it.matches(query) } }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Part for ${line.toBomLine().label()}") },

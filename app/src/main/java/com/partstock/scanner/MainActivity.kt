@@ -1,8 +1,10 @@
 package com.partstock.scanner
 
+import android.content.pm.ApplicationInfo
 import android.graphics.Bitmap
 import android.os.Build
 import android.os.Bundle
+import android.os.StrictMode
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -24,7 +26,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -48,6 +54,10 @@ import com.partstock.scanner.parse.ScanMerger
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Debug builds log any disk access on the main thread (the database is read on IO; see InventoryViewModel).
+        if ((applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+            StrictMode.setThreadPolicy(StrictMode.ThreadPolicy.Builder().detectDiskReads().detectDiskWrites().penaltyLog().build())
+        }
         enableEdgeToEdge()
         val prefs = Prefs(this)
         val db = InventoryDb(applicationContext)
@@ -79,7 +89,10 @@ private sealed interface Screen {
 private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
     val context = LocalContext.current
     var screen by remember { mutableStateOf<Screen>(Screen.Scan) }
-    var partCount by remember { mutableIntStateOf(db.all().size) }
+    // Parts are loaded on IO and kept up to date by the ViewModel (no database reads on the main thread).
+    val vm: InventoryViewModel = viewModel { InventoryViewModel(db) }
+    val inventory by vm.data.collectAsStateWithLifecycle()
+    val partCount = inventory.parts.size
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
 
@@ -91,14 +104,13 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
         UndoOffer.show = { msg, group ->
             scope.launch {
                 snackbar.currentSnackbarData?.dismiss()
-                val undoable = db.canUndo(group)
+                val undoable = withContext(Dispatchers.IO) { db.canUndo(group) }
                 val r = snackbar.showSnackbar(
                     msg, actionLabel = if (undoable) "Undo" else null, withDismissAction = !undoable,
                     duration = if (undoable) SnackbarDuration.Long else SnackbarDuration.Short,
                 )
                 if (r == SnackbarResult.ActionPerformed) {
-                    val n = db.undo(group)
-                    partCount = db.all().size
+                    val n = withContext(Dispatchers.IO) { db.undo(group) }
                     (screen as? Screen.Inventory)?.let { if (it.openPart != null) screen = it.copy(openPart = null) }
                     dataVersion++
                     snackbar.showSnackbar(if (n > 0) "Undone" else "Couldn't undo that any more", duration = SnackbarDuration.Short)
@@ -134,7 +146,7 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
             onFrames = { frames, photo, codes ->
                 val own = LabelCodes.first(codes)
                 if (own != null && own.isPart()) {
-                    if (db.all().any { it.id == own.partId }) screen = Screen.Inventory(openPart = own.partId)
+                    if (inventory.parts.any { it.id == own.partId }) screen = Screen.Inventory(openPart = own.partId)
                     else toast("That label's part is no longer in the inventory")
                 } else if (own != null) {
                     prefs.lastLocation = Locations.plain(own.bin)
@@ -160,7 +172,6 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
                 secrets = secrets,
                 onSaved = { msg ->
                     UndoOffer.offer(context, msg, db.lastChange)
-                    partCount = db.all().size
                     screen = Screen.Scan
                 },
                 onCancel = { screen = Screen.Scan },
@@ -168,14 +179,8 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
         }
 
         Screen.Settings -> {
-            BackHandler {
-                partCount = db.all().size
-                screen = Screen.Scan
-            }
-            SettingsScreen(secrets = secrets, db = db, prefs = prefs, onDone = {
-                partCount = db.all().size
-                screen = Screen.Scan
-            })
+            BackHandler { screen = Screen.Scan }
+            SettingsScreen(secrets = secrets, db = db, prefs = prefs, onDone = { screen = Screen.Scan })
         }
 
         is Screen.Inventory -> {
@@ -183,13 +188,12 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
                 if (s.bin != null) {
                     screen = Screen.Locations
                 } else {
-                    partCount = db.all().size
                     screen = Screen.Scan
                 }
             }
             BackHandler { back() }
             InventoryScreen(
-                db = db, secrets = secrets, onBack = ::back,
+                vm = vm, secrets = secrets, onBack = ::back,
                 onProjects = { screen = Screen.Projects },
                 onLocations = { screen = Screen.Locations },
                 bin = s.bin,
@@ -202,7 +206,7 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
         Screen.Locations -> {
             BackHandler { screen = Screen.Inventory() }
             LocationsScreen(
-                db = db, prefs = prefs,
+                vm = vm, prefs = prefs,
                 onBack = { screen = Screen.Inventory() },
                 onOpen = { screen = Screen.Inventory(it) },
             )

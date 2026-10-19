@@ -33,6 +33,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,10 +49,12 @@ import com.partstock.scanner.parse.Locations
 /** Every bin with how many parts and pieces it holds. Tap a bin to see its parts; the pencil renames it everywhere. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LocationsScreen(db: InventoryDb, prefs: Prefs, onBack: () -> Unit, onOpen: (String) -> Unit) {
+fun LocationsScreen(vm: InventoryViewModel, prefs: Prefs, onBack: () -> Unit, onOpen: (String) -> Unit) {
     val context = LocalContext.current
-    var version by remember { mutableIntStateOf(0) }
-    val bins = remember(version) { db.locations() }
+    val scope = rememberCoroutineScope()
+    // Loaded on IO by the ViewModel and refreshed after every change.
+    val data by vm.data.collectAsStateWithLifecycle()
+    val bins = data.locations
     var renaming by remember { mutableStateOf<LocationSummary?>(null) }
     var labelMenu by remember { mutableStateOf<String?>(null) }
     var labels by remember { mutableStateOf<List<LabelItem>?>(null) }
@@ -69,7 +76,7 @@ fun LocationsScreen(db: InventoryDb, prefs: Prefs, onBack: () -> Unit, onOpen: (
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(vertical = 8.dp),
             )
-            if (bins.isEmpty()) Text("No parts yet.", modifier = Modifier.padding(top = 24.dp))
+            if (data.loaded && bins.isEmpty()) Text("No parts yet.", modifier = Modifier.padding(top = 24.dp))
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(bins, key = { it.name }) { b ->
                     Card(Modifier.fillMaxWidth().clickable { onOpen(b.name) }) {
@@ -93,7 +100,7 @@ fun LocationsScreen(db: InventoryDb, prefs: Prefs, onBack: () -> Unit, onOpen: (
                                     })
                                     DropdownMenuItem(text = { Text("Labels for its ${b.parts} part${if (b.parts == 1) "" else "s"}") }, onClick = {
                                         labelMenu = null
-                                        labels = db.all().filter { Locations.keyOf(it.bins(), b.name) != null }.map(::partLabel)
+                                        labels = data.parts.filter { Locations.keyOf(it.bins(), b.name) != null }.map(::partLabel)
                                     })
                                 }
                             }
@@ -129,11 +136,13 @@ fun LocationsScreen(db: InventoryDb, prefs: Prefs, onBack: () -> Unit, onOpen: (
                 TextButton(
                     enabled = name.isNotBlank() && Locations.normalize(name) != b.name,
                     onClick = {
-                        val n = db.renameLocation(b.name, name.trim())
-                        if (Locations.same(prefs.lastLocation, b.name)) prefs.lastLocation = Locations.plain(name)
+                        val to = name.trim()
                         renaming = null
-                        version++
-                        Toast.makeText(context, "Renamed on $n part${if (n == 1) "" else "s"}", Toast.LENGTH_LONG).show()
+                        scope.launch {
+                            val n = withContext(Dispatchers.IO) { vm.db.renameLocation(b.name, to) }
+                            if (Locations.same(prefs.lastLocation, b.name)) prefs.lastLocation = Locations.plain(to)
+                            Toast.makeText(context, "Renamed on $n part${if (n == 1) "" else "s"}", Toast.LENGTH_LONG).show()
+                        }
                     },
                 ) { Text("Rename") }
             },

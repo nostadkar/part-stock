@@ -27,6 +27,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -149,8 +150,11 @@ fun PhotoThumb(name: String, size: Dp, modifier: Modifier = Modifier, onClick: (
 fun PartPhotosRow(db: InventoryDb, partId: Long, onChanged: () -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var version by remember { mutableIntStateOf(0) }
-    val photos = remember(version) { db.photos(partId) }
+    // Reloaded on IO whenever the database changes (adding or deleting a photo counts).
+    val change by db.changes.collectAsState()
+    val photos by produceState(emptyList<PartPhoto>(), change, partId) {
+        value = withContext(Dispatchers.IO) { db.photos(partId) }
+    }
     var viewing by remember { mutableStateOf<PartPhoto?>(null) }
     var busy by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf<String?>(null) }
@@ -169,7 +173,6 @@ fun PartPhotosRow(db: InventoryDb, partId: Long, onChanged: () -> Unit = {}) {
             } else {
                 withContext(Dispatchers.IO) { db.addPhoto(partId, name) }
                 msg = null
-                version++
                 onChanged()
             }
             busy = false
@@ -193,10 +196,11 @@ fun PartPhotosRow(db: InventoryDb, partId: Long, onChanged: () -> Unit = {}) {
 
     viewing?.let { p ->
         fun delete() {
-            db.deletePhoto(p.id)
             viewing = null
-            version++
-            onChanged()
+            scope.launch {
+                withContext(Dispatchers.IO) { db.deletePhoto(p.id) }
+                onChanged()
+            }
         }
         // null = still loading; a missing file (e.g. after restoring the app from a cloud backup) can be removed.
         val loaded by produceState<Pair<Bitmap?, Boolean>?>(null, p.file) {

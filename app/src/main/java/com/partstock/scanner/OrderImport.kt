@@ -24,6 +24,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -83,11 +86,28 @@ fun OrderImportFlow(db: InventoryDb, onClose: (String?) -> Unit) {
 
 @Composable
 private fun OrderLinesDialog(db: InventoryDb, order: OrderCsv.Order, onClose: (String?) -> Unit) {
+    // Which lines are in stock already and which bags were imported before, read on IO before showing the list.
+    val first by produceState<Pair<List<Match?>, List<BagHit?>>?>(null) {
+        value = withContext(Dispatchers.IO) {
+            order.lines.map { db.find(it.mpn, it.customerPn, it.distributorPn) } to
+                order.lines.map { db.findBag(it.fingerprint(order.distributor, order.orderNumber)) }
+        }
+    }
+    val (matches, firstSeen) = first ?: return
+    OrderLinesDialog(db, order, matches, firstSeen, onClose)
+}
+
+@Composable
+private fun OrderLinesDialog(
+    db: InventoryDb, order: OrderCsv.Order, matches: List<Match?>, firstSeen: List<BagHit?>, onClose: (String?) -> Unit,
+) {
     var orderNo by remember { mutableStateOf(order.orderNumber) }
-    val matches = remember { order.lines.map { db.find(it.mpn, it.customerPn, it.distributorPn) } }
-    val seen = remember(orderNo) { order.lines.map { db.findBag(it.fingerprint(order.distributor, orderNo)) } }
+    val seen by produceState(firstSeen, orderNo) {
+        value = if (orderNo == order.orderNumber) firstSeen
+        else withContext(Dispatchers.IO) { order.lines.map { db.findBag(it.fingerprint(order.distributor, orderNo)) } }
+    }
     // Lines already imported start unticked; ticking one adds it again on purpose.
-    val checked = remember { mutableStateListOf<Boolean>().apply { addAll(seen.map { it == null }) } }
+    val checked = remember { mutableStateListOf<Boolean>().apply { addAll(firstSeen.map { it == null }) } }
     var error by remember { mutableStateOf<String?>(null) }
     val count = checked.count { it }
 

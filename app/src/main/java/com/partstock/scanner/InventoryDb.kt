@@ -1,5 +1,9 @@
 package com.partstock.scanner
 
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import android.content.ContentValues
 import android.content.Context
 import android.database.Cursor
@@ -208,6 +212,23 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
     /** Called after every change to the parts table (used for auto backup). */
     @Volatile var onChanged: (() -> Unit)? = null
 
+    private val changeCount = MutableStateFlow(0L)
+
+    /**
+     * Goes up after every change to parts, stock or photos (including Undo), so screens and [InventoryViewModel]
+     * reload off the main thread instead of being told to by hand.
+     */
+    val changes: StateFlow<Long> = changeCount.asStateFlow()
+
+    private fun bump() {
+        changeCount.update { it + 1 }
+    }
+
+    private fun fireChanged() {
+        bump()
+        onChanged?.invoke()
+    }
+
     /** Change group of the latest recorded change, for the Undo snackbar ([undo]); 0 = none yet. */
     @Volatile var lastChange: Long = 0
         private set
@@ -345,7 +366,8 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
     fun addPhoto(partId: Long, file: String, kind: String = "photo") {
         writableDatabase.insert("part_photos", null, ContentValues().apply {
             put("part_id", partId); put("file", file); put("kind", kind); put("created_at", now())
-        })
+        })})
+        bump()
     }
 
     /** Removes one photo and deletes its file. */
@@ -357,6 +379,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         db.delete("part_photos", "id = ?", arrayOf(photoId.toString()))
         File(photoDir, file).delete()
         PartPhotos.forget(file)
+        bump()
     }
 
     /** Pieces per part per bin. parts.quantity stays as the total and parts.location as the main bin. */
@@ -602,7 +625,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         } finally {
             db.endTransaction()
         }
-        if (n > 0) onChanged?.invoke()
+        if (n > 0) fireChanged()
         return n
     }
 
@@ -788,7 +811,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         } finally {
             db.endTransaction()
         }
-        onChanged?.invoke()
+        fireChanged()
         return moved
     }
 
@@ -818,7 +841,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         } finally {
             db.endTransaction()
         }
-        if (changed > 0) onChanged?.invoke()
+        if (changed > 0) fireChanged()
         return changed
     }
 
@@ -842,7 +865,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
     }
 
     /** Adds or updates the part and logs the scan. Returns the new quantity. */
-    fun save(e: ScanEntry): Int = saveTx(e).also { onChanged?.invoke() }
+    fun save(e: ScanEntry): Int = saveTx(e).also { fireChanged() }
 
     /** Saves several entries (e.g. the lines of an imported order) in one transaction: all or none. */
     fun saveAll(entries: List<ScanEntry>) {
@@ -857,7 +880,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                 db.endTransaction()
             }
         }
-        onChanged?.invoke()
+        fireChanged()
     }
 
     private fun saveTx(e: ScanEntry): Int {
@@ -1040,7 +1063,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             db.endTransaction()
         }
         replacedPhotos.forEach(::trashPhoto)
-        if (!dryRun) onChanged?.invoke()
+        if (!dryRun) fireChanged()
         return ImportSummary(rows.size, added, updated, removed)
     }
 
@@ -1078,7 +1101,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         } finally {
             db.endTransaction()
         }
-        onChanged?.invoke()
+        fireChanged()
     }
 
     private fun updateTx(
@@ -1147,7 +1170,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
 
     /** Tells listeners (auto backup) that parts changed, e.g. after a batch of [applyLookup] calls. */
     fun notifyChanged() {
-        onChanged?.invoke()
+        fireChanged()
     }
 
     /** Deletes the part. The history keeps it as it was, so Undo brings it back (same id) for [SNAPSHOT_DAYS] days. */
@@ -1169,7 +1192,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         }
         // Its photos leave the part now; the files are removed for good when Undo can no longer bring the part back.
         photos.forEach(::trashPhoto)
-        onChanged?.invoke()
+        fireChanged()
     }
 
     /**
@@ -1184,7 +1207,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         } finally {
             db.endTransaction()
         }
-        onChanged?.invoke()
+        fireChanged()
         return total
     }
 
@@ -1246,7 +1269,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                 db.endTransaction()
             }
         }
-        onChanged?.invoke()
+        fireChanged()
         return plan
     }
 
@@ -1353,7 +1376,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
                 db.endTransaction()
             }
         }
-        onChanged?.invoke()
+        fireChanged()
     }
 
     /** A scanned Entrust kit as BOM lines, each already tied to its stock part. */
