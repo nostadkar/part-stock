@@ -366,7 +366,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
     fun addPhoto(partId: Long, file: String, kind: String = "photo") {
         writableDatabase.insert("part_photos", null, ContentValues().apply {
             put("part_id", partId); put("file", file); put("kind", kind); put("created_at", now())
-        })})
+        })
         bump()
     }
 
