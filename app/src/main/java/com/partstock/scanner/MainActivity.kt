@@ -88,7 +88,7 @@ class MainActivity : ComponentActivity() {
 private sealed interface Screen {
     data object Scan : Screen
     /** [photo] is one of the photos that was read, shown on the review screen to compare against. */
-    data class Review(val part: ParsedPart, val photo: Bitmap? = null) : Screen
+    data class Review(val part: ParsedPart, val photo: Bitmap? = null, val batchId: String? = null) : Screen
     /** [bin] = show only the parts in that bin (opened from the Locations screen). */
     data class Inventory(val bin: String? = null, val openPart: Long? = null) : Screen
     data object Locations : Screen
@@ -104,6 +104,13 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
     val vm: InventoryViewModel = viewModel { InventoryViewModel(db) }
     val inventory by vm.data.collectAsStateWithLifecycle()
     val partCount = inventory.parts.size
+    // Batch scanning: the queue lives in a ViewModel (lookups keep running while a bag is reviewed) and in a file.
+    val batch: BatchViewModel = viewModel { BatchViewModel(context.applicationContext, db, prefs, secrets) }
+    val batchItems by batch.items.collectAsStateWithLifecycle()
+    val batchCards = remember(batchItems) { BatchQueue.evaluate(batchItems) }
+    var batchMode by remember { mutableStateOf(prefs.batchMode) }
+    var batchBin by remember { mutableStateOf(prefs.batchBin) }
+    var batchSaving by remember { mutableStateOf(false) }
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
 
@@ -145,6 +152,38 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
         )
     }
 
+    /** Opens a queued bag in the normal review screen (photo read off the main thread). */
+    fun reviewBatch(card: BatchCard) {
+        scope.launch {
+            val photo = withContext(Dispatchers.IO) { batch.photo(card.item) }
+            screen = Screen.Review(card.part, photo, batchId = card.item.id)
+        }
+    }
+
+    /** Next bag that needs a look, oldest first; null when none is left. */
+    fun nextToReview(): BatchCard? = BatchQueue.evaluate(batch.items.value)
+        .firstOrNull { it.status == BatchStatus.CHECK || it.status == BatchStatus.DUPLICATE }
+
+    fun saveConfident() {
+        if (batchSaving) return
+        batchSaving = true
+        scope.launch {
+            try {
+                val n = batch.saveConfident(batchBin)
+                if (n > 0) {
+                    val where = if (batchBin.isBlank()) "" else " to ${Locations.normalize(batchBin)}"
+                    UndoOffer.offer(context, if (n == 1) "Saved 1 bag$where" else "Saved $n bags$where", db.lastChange)
+                } else {
+                    toast("No bag passes all the checks right now")
+                }
+            } catch (e: Exception) {
+                toast("Save failed: ${e.message}")
+            } finally {
+                batchSaving = false
+            }
+        }
+    }
+
     val reduceMotion = rememberReduceMotion()
     Box(Modifier.fillMaxSize()) {
     key(dataVersion) {
@@ -169,7 +208,15 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
                     else toast("That label's part is no longer in the inventory")
                 } else if (own != null) {
                     prefs.lastLocation = Locations.plain(own.bin)
+                    if (batchMode) {
+                        batchBin = Locations.plain(own.bin)
+                        prefs.batchBin = batchBin
+                    }
                     toast("Bin set to ${Locations.normalize(own.bin)} for the next saves")
+                } else if (batchMode) {
+                    val labelCodes = if (prefs.readBarcodes) codes.filterNot { LabelCodes.isOurs(it) } else emptyList()
+                    if (frames.all { f -> f.all { it.text.isBlank() } }) toast("No text found. Move closer and avoid glare.")
+                    else batch.add(frames, photo, labelCodes)
                 } else {
                     // Barcodes are read exactly: where one disagrees with OCR, the barcode wins.
                     val labelCodes = if (prefs.readBarcodes) codes.filterNot { LabelCodes.isOurs(it) } else emptyList()
@@ -179,22 +226,57 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
                 }
             },
             onError = ::toast,
+            batchMode = batchMode,
+            onBatchMode = {
+                batchMode = it
+                prefs.batchMode = it
+            },
+            batchTop = {
+                BatchBinChip(batchBin) {
+                    batchBin = it
+                    prefs.batchBin = it
+                }
+            },
+            batchTray = { reading ->
+                BatchTray(
+                    cards = batchCards,
+                    reading = reading,
+                    saving = batchSaving,
+                    onSaveConfident = ::saveConfident,
+                    onReviewNext = { nextToReview()?.let(::reviewBatch) },
+                    onOpen = ::reviewBatch,
+                    onRemove = { batch.remove(it.item.id) },
+                    onClear = { batch.clear() },
+                )
+            },
         )
 
         is Screen.Review -> {
             BackHandler { screen = Screen.Scan }
-            ReviewScreen(
-                part = s.part,
-                photo = s.photo,
-                db = db,
-                prefs = prefs,
-                secrets = secrets,
-                onSaved = { msg ->
-                    UndoOffer.offer(context, msg, db.lastChange)
-                    screen = Screen.Scan
-                },
-                onCancel = { screen = Screen.Scan },
-            )
+            // A new key per bag, so going from one batch bag straight to the next starts a fresh form.
+            key(s) {
+                ReviewScreen(
+                    part = s.part,
+                    photo = s.photo,
+                    db = db,
+                    prefs = prefs,
+                    secrets = secrets,
+                    onSaved = { msg ->
+                        UndoOffer.offer(context, msg, db.lastChange)
+                        val id = s.batchId
+                        if (id != null) {
+                            // Reviewed bags leave the batch; go on with the next one that needs a look.
+                            batch.remove(id)
+                            val next = nextToReview()
+                            if (next != null) reviewBatch(next) else screen = Screen.Scan
+                        } else {
+                            screen = Screen.Scan
+                        }
+                    },
+                    onCancel = { screen = Screen.Scan },
+                    initialLocation = if (s.batchId != null) batchBin else null,
+                )
+            }
         }
 
         Screen.Settings -> {

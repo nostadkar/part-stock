@@ -19,6 +19,17 @@ Anything else falls back to a best-effort read; you can always correct fields be
 are read from one photo and merged into one part. The Mouser/DigiKey label gives the bag quantity; the kit
 label's Qty is per board, so it is shown as a hint ("1 per board × 6 boards = 6 used") and never added to the count.
 
+**Batch mode** (chip at the top of the scan screen) is for a pile of bags. Set the bin once (*Bin* chip, or scan a bin
+QR label), then just keep scanning: each bag is queued in a tray at the bottom, read, and looked up on DigiKey (DigiKey
+labels, when set up) or Mouser in the background, one request at a time and paced under Mouser's limit (a rate limit
+waits a minute and carries on). Each card shows the part number, quantity and a status: *Looking up*, *Looked up*
+(confident), *Needs check* or *Duplicate bag*. **Save confident** adds every bag that passed all the checks in one go
+(one Undo): part number and bag quantity read, the lookup found exactly that part number, and the bag isn't a duplicate
+(saved before, or scanned twice in this batch; rechecked at save time). Without a Mouser or DigiKey key nothing counts as
+confident. **Review** opens the other bags one by one in the normal review screen; saving one moves on to the next.
+Tap any card to review it, or × to drop it. The queue (OCR text and photo) is kept in the app's files, so it survives
+leaving the app.
+
 Parts are matched on **MPN**, then **Customer PN**, then **Distributor PN**, so the DigiKey bag
 (Customer Reference `811755-101`, MPN `2SK3019-TP`) and the Entrust kit bag (PN `811755-101`,
 Alt PN `2SK3019-TP`) land on the same row.

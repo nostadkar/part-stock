@@ -76,13 +76,15 @@ fun ReviewScreen(
     secrets: SecretStore,
     onSaved: (String) -> Unit,
     onCancel: () -> Unit,
+    /** Bin to start with instead of the last one used (a batch's bin). */
+    initialLocation: String? = null,
 ) {
     val scope = rememberCoroutineScope()
     var mpn by remember { mutableStateOf(part.mpn.orEmpty()) }
     var description by remember { mutableStateOf(part.description.orEmpty()) }
     var manufacturer by remember { mutableStateOf(part.manufacturer.orEmpty()) }
     var qty by remember { mutableStateOf(part.quantity?.toString().orEmpty()) }
-    var location by remember { mutableStateOf(prefs.lastLocation) }
+    var location by remember { mutableStateOf(initialLocation?.takeIf { it.isNotBlank() } ?: prefs.lastLocation) }
     var distributorPn by remember { mutableStateOf(part.distributorPn.orEmpty()) }
     var customerPn by remember { mutableStateOf(part.customerPn.orEmpty()) }
     var notes by remember { mutableStateOf(part.notes.orEmpty()) }

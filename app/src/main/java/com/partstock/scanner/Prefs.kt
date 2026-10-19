@@ -69,4 +69,14 @@ class Prefs(context: Context) {
     var syncPending: Boolean
         get() = sp.getBoolean("syncPending", false)
         set(v) = sp.edit().putBoolean("syncPending", v).apply()
+
+    /** Scan screen in batch mode: each bag is queued and looked up in the background instead of opening review. */
+    var batchMode: Boolean
+        get() = sp.getBoolean("batchMode", false)
+        set(v) = sp.edit().putBoolean("batchMode", v).apply()
+
+    /** Bin every bag of the current batch goes into (set once at the top of the scan screen). */
+    var batchBin: String
+        get() = sp.getString("batchBin", "") ?: ""
+        set(v) = sp.edit().putString("batchBin", v.trim()).apply()
 }

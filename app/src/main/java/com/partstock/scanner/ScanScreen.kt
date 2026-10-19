@@ -39,6 +39,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.PhotoLibrary
@@ -50,6 +51,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -91,6 +94,13 @@ fun ScanScreen(
     /** Read the label's barcodes too (Settings → Read label barcodes). */
     readBarcodes: Boolean = true,
     onError: (String) -> Unit,
+    /** Batch mode: bags queue in [batchTray] instead of opening the review screen (MainActivity decides). */
+    batchMode: Boolean = false,
+    onBatchMode: (Boolean) -> Unit = {},
+    /** Extra controls next to the Batch chip while batch mode is on (the bin). */
+    batchTop: @Composable () -> Unit = {},
+    /** The queue, shown above the shutter in batch mode; [reading] = a capture is being read right now. */
+    batchTray: @Composable (reading: Boolean) -> Unit = {},
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -212,7 +222,9 @@ fun ScanScreen(
                 // Framing guide
                 Box(
                     Modifier
-                        .align(Alignment.Center)
+                        // In batch mode the queue fills the bottom, so the guide moves up.
+                        .align(if (batchMode) Alignment.TopCenter else Alignment.Center)
+                        .padding(top = if (batchMode) 96.dp else 0.dp)
                         .fillMaxWidth(0.88f)
                         .aspectRatio(1.3f)
                         .border(2.dp, Color.White.copy(alpha = 0.8f), RoundedCornerShape(12.dp))
@@ -225,13 +237,6 @@ fun ScanScreen(
                         modifier = Modifier.align(Alignment.Center),
                     )
                 }
-                Text(
-                    "Fit the label in the box and hold still. Tap to focus. Tilt the bag a little if the foil glares.",
-                    color = Color.White,
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.align(Alignment.TopCenter).padding(16.dp),
-                )
             } else {
                 Column(
                     Modifier.align(Alignment.Center).padding(24.dp),
@@ -244,36 +249,74 @@ fun ScanScreen(
                 }
             }
 
-            Row(
-                Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(bottom = 28.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically,
+            Column(
+                Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                FilledTonalIconButton(
-                    onClick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                    enabled = !busy,
-                    modifier = Modifier.size(56.dp),
-                ) { Icon(Icons.Filled.PhotoLibrary, contentDescription = "Pick photo") }
-
-                FilledIconButton(
-                    onClick = ::capture,
-                    enabled = hasCamera && !busy,
-                    modifier = Modifier.size(80.dp),
-                    colors = IconButtonDefaults.filledIconButtonColors(),
-                ) {
-                    if (busy) CircularProgressIndicator(Modifier.size(32.dp), color = MaterialTheme.colorScheme.onPrimary)
-                    else Icon(Icons.Filled.CameraAlt, contentDescription = "Read label", modifier = Modifier.size(36.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    FilterChip(
+                        selected = batchMode,
+                        onClick = { onBatchMode(!batchMode) },
+                        label = { Text("Batch mode") },
+                        leadingIcon = if (batchMode) {
+                            { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                        } else {
+                            null
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                        ),
+                    )
+                    if (batchMode) batchTop()
                 }
+                if (hasCamera) {
+                    Text(
+                        if (batchMode) "Fit each label in the box and tap the shutter; keep going with the next bag."
+                        else "Fit the label in the box and hold still. Tap to focus. Tilt the bag a little if the foil glares.",
+                        color = Color.White,
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
 
-                FilledTonalIconButton(
-                    onClick = {
-                        torch = !torch
-                        camera?.cameraControl?.enableTorch(torch)
-                    },
-                    enabled = hasCamera,
-                    modifier = Modifier.size(56.dp),
+            Column(
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding(),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (batchMode) batchTray(busy)
+                Row(
+                    Modifier.fillMaxWidth().padding(bottom = if (batchMode) 12.dp else 28.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(if (torch) Icons.Filled.FlashOn else Icons.Filled.FlashOff, contentDescription = "Light")
+                    FilledTonalIconButton(
+                        onClick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                        enabled = !busy,
+                        modifier = Modifier.size(56.dp),
+                    ) { Icon(Icons.Filled.PhotoLibrary, contentDescription = "Pick photo") }
+
+                    FilledIconButton(
+                        onClick = ::capture,
+                        enabled = hasCamera && !busy,
+                        modifier = Modifier.size(80.dp),
+                        colors = IconButtonDefaults.filledIconButtonColors(),
+                    ) {
+                        if (busy) CircularProgressIndicator(Modifier.size(32.dp), color = MaterialTheme.colorScheme.onPrimary)
+                        else Icon(Icons.Filled.CameraAlt, contentDescription = "Read label", modifier = Modifier.size(36.dp))
+                    }
+
+                    FilledTonalIconButton(
+                        onClick = {
+                            torch = !torch
+                            camera?.cameraControl?.enableTorch(torch)
+                        },
+                        enabled = hasCamera,
+                        modifier = Modifier.size(56.dp),
+                    ) {
+                        Icon(if (torch) Icons.Filled.FlashOn else Icons.Filled.FlashOff, contentDescription = "Light")
+                    }
                 }
             }
         }
