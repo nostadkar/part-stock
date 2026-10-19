@@ -112,6 +112,7 @@ fun InventoryScreen(
     val listState = rememberLazyListState()
     val barState = rememberTopAppBarState()
     val focus = remember { FocusRequester() }
+    val datasheets = rememberDatasheetOpener(db, secrets)
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
 
@@ -226,6 +227,7 @@ fun InventoryScreen(
                     knownBins = data.locations.map { it.name },
                     scopes = scopes,
                     animate = !reduceMotion,
+                    datasheets = datasheets,
                     actions = PartDetailsActions(
                         back = { selectedId = null },
                         save = { stock, loc, desc, cost, cat, min ->
@@ -412,6 +414,7 @@ fun InventoryScreen(
                         actions = listActions,
                         scopes = scopes,
                         animate = !reduceMotion,
+                        datasheets = datasheets,
                         modifier = Modifier.padding(top = padding.calculateTopPadding()),
                         header = {
                             if (bin != null) {

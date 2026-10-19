@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -91,6 +92,7 @@ fun InventoryList(
     actions: InventoryListActions,
     scopes: SharedScopes?,
     animate: Boolean,
+    datasheets: DatasheetOpener,
     modifier: Modifier = Modifier,
     header: @Composable () -> Unit = {},
 ) {
@@ -168,7 +170,7 @@ fun InventoryList(
                         scopes = scopes,
                         animate = animate,
                         onClick = { actions.open(p) },
-                        onDatasheet = { url -> openLink(context, url) },
+                        datasheets = datasheets,
                     )
                 }
             }
@@ -324,7 +326,7 @@ private fun PartRowCard(
     scopes: SharedScopes?,
     animate: Boolean,
     onClick: () -> Unit,
-    onDatasheet: (String) -> Unit,
+    datasheets: DatasheetOpener,
 ) {
     val p = part
     val mark = MaterialTheme.colorScheme.tertiaryContainer
@@ -362,15 +364,18 @@ private fun PartRowCard(
                     SpecChips(chips, Modifier.padding(top = 4.dp))
                 }
             }
-            val sheet = p.datasheet()
-            if (sheet.isNotBlank()) {
-                IconButton(onClick = { onDatasheet(sheet) }) {
-                    Icon(
-                        Icons.Filled.Description,
-                        contentDescription = if (Links.isDatasheetSearch(sheet)) "Find datasheet" else "Datasheet",
-                        tint = if (Links.isDatasheetSearch(sheet)) MaterialTheme.colorScheme.onSurfaceVariant
-                        else MaterialTheme.colorScheme.primary,
-                    )
+            if (p.datasheet().isNotBlank()) {
+                val search = datasheets.isSearch(p)
+                IconButton(onClick = { datasheets.open(p) }, enabled = datasheets.busyId == null) {
+                    if (datasheets.busyId == p.id) {
+                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(
+                            Icons.Filled.Description,
+                            contentDescription = if (search) "Find datasheet" else "Datasheet",
+                            tint = if (search) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
             }
             Column(horizontalAlignment = Alignment.End) {

@@ -1168,6 +1168,12 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         db.update("parts", v, "id = ?", arrayOf(id.toString()))
     }
 
+    /** Saves a datasheet link found when the Datasheet button was tapped. Not stock, so not in the history. */
+    fun setDatasheet(id: Long, url: String) {
+        writableDatabase.update("parts", ContentValues().apply { put("datasheet_url", url) }, "id = ?", arrayOf(id.toString()))
+        fireChanged()
+    }
+
     /** Tells listeners (auto backup) that parts changed, e.g. after a batch of [applyLookup] calls. */
     fun notifyChanged() {
         fireChanged()

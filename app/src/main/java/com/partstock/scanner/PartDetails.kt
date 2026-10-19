@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -94,6 +95,7 @@ fun PartDetails(
     scopes: SharedScopes?,
     animate: Boolean,
     actions: PartDetailsActions,
+    datasheets: DatasheetOpener,
     /** The photo strip with add / delete (see [PartPhotosRow]). */
     photoStrip: @Composable () -> Unit,
 ) {
@@ -246,10 +248,21 @@ fun PartDetails(
             if (sheet.isNotBlank() || link.isNotBlank()) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (sheet.isNotBlank()) {
-                        FilledTonalButton(onClick = { openLink(context, sheet) }, modifier = Modifier.weight(1f)) {
-                            Icon(Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(18.dp))
+                        FilledTonalButton(
+                            onClick = { datasheets.open(part) }, enabled = datasheets.busyId == null,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            if (datasheets.busyId == part.id) {
+                                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(18.dp))
+                            }
                             Text(
-                                if (Links.isDatasheetSearch(sheet)) "Find datasheet" else "Datasheet",
+                                when {
+                                    datasheets.busyId == part.id -> "Finding…"
+                                    datasheets.isSearch(part) -> "Find datasheet"
+                                    else -> "Datasheet"
+                                },
                                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 6.dp),
                             )
                         }
