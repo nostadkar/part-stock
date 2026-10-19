@@ -10,6 +10,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.ContentTransform
@@ -43,10 +44,8 @@ import kotlinx.coroutines.withContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -64,6 +63,8 @@ import com.partstock.scanner.parse.ScanMerger
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        // The splash (icon on the brand color) shows while the app starts, instead of a blank window.
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         // Debug builds log any disk access on the main thread (the database is read on IO; see InventoryViewModel).
         if ((applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
@@ -71,6 +72,7 @@ class MainActivity : ComponentActivity() {
         }
         enableEdgeToEdge()
         val prefs = Prefs(this)
+        AppTheme.dynamicColor = prefs.dynamicColor
         val db = InventoryDb(applicationContext)
         val secrets = SecretStore(applicationContext)
         db.onChanged = {
@@ -346,10 +348,10 @@ private fun PartStockTheme(content: @Composable () -> Unit) {
     val dark = isSystemInDarkTheme()
     val context = LocalContext.current
     val scheme = when {
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
+        AppTheme.dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
             if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        dark -> darkColorScheme()
-        else -> lightColorScheme()
+        dark -> BrandColors.dark
+        else -> BrandColors.light
     }
     MaterialTheme(colorScheme = scheme, content = content)
 }

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Single-color layer for Android 13 themed icons (the system tints it); same shapes as the foreground. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="3.5" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M32,42 L32,32 L42,32 M66,32 L76,32 L76,42 M76,66 L76,76 L66,76 M42,76 L32,76 L32,66" />
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M45,36h4v4h-4z M52,36h4v4h-4z M59,36h4v4h-4z" />
+    <path android:fillColor="#FFFFFF" android:fillType="evenOdd"
+        android:pathData="M42,40 L66,40 L66,54 L42,54 Z M45,43 L48,43 L48,46 L45,46 Z" />
+    <path android:fillColor="#FFFFFF" android:fillType="evenOdd"
+        android:pathData="M36,57 L72,57 L69,72 L39,72 Z M48,61 L60,61 L60,64.5 L48,64.5 Z" />
+</vector>

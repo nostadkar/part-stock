@@ -267,6 +267,23 @@ fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: 
                 })
             }
 
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Wallpaper colors", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "Colors the app from your wallpaper (Android dynamic color). Off: Part Stock's own navy and amber.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = AppTheme.dynamicColor, onCheckedChange = {
+                        AppTheme.dynamicColor = it
+                        prefs.dynamicColor = it
+                    })
+                }
+            }
+
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             Text("DigiKey API (Client ID and Secret)", style = MaterialTheme.typography.titleMedium)
             Text(

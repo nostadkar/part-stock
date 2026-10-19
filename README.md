@@ -55,6 +55,10 @@ Part Stock). Settings → Check for updates does the same on demand. The build n
 
 To build locally instead: open the folder in Android Studio and press Run. Min Android 8.0.
 
+**Look**: an adaptive launcher icon (a chip in a parts bin inside scan brackets, vector only) with a monochrome layer for
+Android 13 themed icons, and a matching splash screen at launch. On Android 12+ the app takes its colors from the
+wallpaper; Settings → *Wallpaper colors* off (or Android 8–11) uses Part Stock's own navy and amber.
+
 ## Links, cost and the Mouser API key
 
 - Every part gets a link: Mouser labels open the Mouser product page, DigiKey labels open a DigiKey search for the

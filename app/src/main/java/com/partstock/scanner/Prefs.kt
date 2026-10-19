@@ -79,4 +79,9 @@ class Prefs(context: Context) {
     var batchBin: String
         get() = sp.getString("batchBin", "") ?: ""
         set(v) = sp.edit().putString("batchBin", v.trim()).apply()
+
+    /** Android 12+: color the app from the wallpaper (dynamic color); off = the app's own brand colors. */
+    var dynamicColor: Boolean
+        get() = sp.getBoolean("dynamicColor", true)
+        set(v) = sp.edit().putBoolean("dynamicColor", v).apply()
 }

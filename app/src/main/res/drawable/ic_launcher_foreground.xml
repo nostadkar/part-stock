@@ -1,17 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A chip package (SOT-style) inside a scan frame. 108dp canvas, safe zone is the middle 66dp. -->
+<!--
+  Part Stock mark: a chip sitting in a parts bin, inside scan brackets. 108dp adaptive-icon canvas; everything stays
+  within ~31dp of the centre so it survives circle, squircle and rounded-square masks. Original artwork.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- scan frame corners -->
-    <path android:strokeColor="#FFFFFF" android:strokeWidth="3.5" android:strokeLineCap="round"
-        android:pathData="M30,40 L30,30 L40,30 M68,30 L78,30 L78,40 M78,68 L78,78 L68,78 M40,78 L30,78 L30,68" />
-    <!-- leads -->
-    <path android:fillColor="#F2B33D"
-        android:pathData="M44,40h4v6h-4z M60,40h4v6h-4z M52,62h4v6h-4z" />
-    <!-- body -->
-    <path android:fillColor="#FFFFFF" android:pathData="M40,46h28v16h-28z" />
-    <path android:fillColor="#1F3A5F" android:pathData="M43,49h3v3h-3z" />
+    <!-- scan brackets -->
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="3.5" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M32,42 L32,32 L42,32 M66,32 L76,32 L76,42 M76,66 L76,76 L66,76 M42,76 L32,76 L32,66" />
+    <!-- chip leads -->
+    <path android:fillColor="#C9D3E0"
+        android:pathData="M45,36h4v4h-4z M52,36h4v4h-4z M59,36h4v4h-4z M45,54h4v4h-4z M52,54h4v4h-4z M59,54h4v4h-4z" />
+    <!-- chip body with the pin-1 dot cut out -->
+    <path android:fillColor="#FFFFFF" android:fillType="evenOdd"
+        android:pathData="M42,40 L66,40 L66,54 L42,54 Z M45,43 L48,43 L48,46 L45,46 Z" />
+    <!-- parts bin with its label slot cut out -->
+    <path android:fillColor="#F2B33D" android:fillType="evenOdd"
+        android:pathData="M36,57 L72,57 L69,72 L39,72 Z M48,61 L60,61 L60,64.5 L48,64.5 Z" />
 </vector>
