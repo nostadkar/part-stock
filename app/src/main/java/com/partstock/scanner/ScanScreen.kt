@@ -209,12 +209,18 @@ fun ScanScreen(
                             }
                             val future = ProcessCameraProvider.getInstance(ctx)
                             future.addListener({
-                                val provider = future.get()
-                                val preview = Preview.Builder().build().also { it.setSurfaceProvider(view.surfaceProvider) }
-                                provider.unbindAll()
-                                camera = provider.bindToLifecycle(
-                                    lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture
-                                )
+                                // A phone (or emulator) without a usable back camera must not crash the app:
+                                // picking a photo still works.
+                                try {
+                                    val provider = future.get()
+                                    val preview = Preview.Builder().build().also { it.setSurfaceProvider(view.surfaceProvider) }
+                                    provider.unbindAll()
+                                    camera = provider.bindToLifecycle(
+                                        lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture
+                                    )
+                                } catch (e: Exception) {
+                                    onError("Camera not available: ${e.message ?: e.javaClass.simpleName}")
+                                }
                             }, ContextCompat.getMainExecutor(ctx))
                         }
                     },

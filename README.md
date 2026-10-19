@@ -40,6 +40,11 @@ Every push to `main` runs the GitHub Actions workflow in `.github/workflows/buil
 parser tests, builds a release APK, and publishes it as a GitHub Release (`part-stock.apk`). On the phone:
 open the repo → **Releases** → latest → tap `part-stock.apk` → allow installing from your browser.
 
+Before the release step, the workflow also starts the app on an Android emulator (API 30) and runs a smoke test
+(`app/src/androidTest/.../SmokeTest.kt`) that opens Inventory, Locations, Projects and Settings and goes back, with an
+empty inventory and with a few parts. If the app crashes there, no release is published. Run it locally with
+`./gradlew connectedDebugAndroidTest` and a device or emulator attached.
+
 The APK is signed with a test key kept in the repo (`app/partstock-test.keystore`), so each new build
 installs over the previous one and your inventory is kept. Don't reuse that key for anything published.
 

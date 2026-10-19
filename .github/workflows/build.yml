@@ -26,6 +26,46 @@ jobs:
           chmod +x gradlew
           ./gradlew :app:testDebugUnitTest :app:assembleRelease --stacktrace
 
+      # Smoke test: launch the app on an emulator and open the main screens (app/src/androidTest). If it fails,
+      # the steps below don't run, so no release is published.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Cache the emulator (AVD and snapshot)
+        uses: actions/cache@v4
+        id: avd-cache
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: avd-api30-x86_64-v1
+
+      - name: Create the emulator snapshot
+        if: steps.avd-cache.outputs.cache-hit != 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: default
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: false
+          script: echo "Emulator snapshot created for the cache."
+
+      - name: Smoke test on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: default
+          force-avd-creation: false
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: ./gradlew :app:connectedDebugAndroidTest --stacktrace
+
       - name: Name the APK
         run: cp app/build/outputs/apk/release/app-release.apk part-stock.apk
 
@@ -36,6 +76,7 @@ jobs:
 
       # A release gives a plain download link that's easy to open on a phone.
       - name: Publish release
+        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
