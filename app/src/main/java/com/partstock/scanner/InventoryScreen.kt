@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DeveloperBoard
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Refresh
@@ -328,7 +329,18 @@ fun InventoryScreen(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
-                            Column(Modifier.padding(start = 12.dp), horizontalAlignment = Alignment.End) {
+                            val sheet = p.datasheet()
+                            if (sheet.isNotBlank()) {
+                                IconButton(onClick = { openLink(context, sheet) }) {
+                                    Icon(
+                                        Icons.Filled.Description,
+                                        contentDescription = if (Links.isDatasheetSearch(sheet)) "Find datasheet" else "Datasheet",
+                                        tint = if (Links.isDatasheetSearch(sheet)) MaterialTheme.colorScheme.onSurfaceVariant
+                                        else MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                            }
+                            Column(Modifier.padding(start = 4.dp), horizontalAlignment = Alignment.End) {
                                 Text(
                                     p.quantity.toString(), style = MaterialTheme.typography.titleLarge,
                                     color = if (p.isLow()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
@@ -699,12 +711,15 @@ private fun EditDialog(
                 if (ids.isNotBlank()) Text(ids, style = MaterialTheme.typography.bodySmall)
                 val chips = part.specs().chips()
                 if (chips.isNotEmpty()) SpecChips(chips)
-                Row {
+                Row(Modifier.horizontalScroll(rememberScrollState())) {
                     if (link.isNotBlank()) {
                         TextButton(onClick = { openLink(context, link) }) { Text("Open on ${Links.siteName(link)}") }
                     }
-                    if (part.datasheetUrl.isNotBlank()) {
-                        TextButton(onClick = { openLink(context, part.datasheetUrl) }) { Text("Datasheet") }
+                    val sheet = part.datasheet()
+                    if (sheet.isNotBlank()) {
+                        TextButton(onClick = { openLink(context, sheet) }) {
+                            Text(if (Links.isDatasheetSearch(sheet)) "Find datasheet" else "Datasheet")
+                        }
                     }
                     if (onLabel != null) TextButton(onClick = onLabel) { Text("Label") }
                     if (onHistory != null) TextButton(onClick = onHistory) { Text("History") }

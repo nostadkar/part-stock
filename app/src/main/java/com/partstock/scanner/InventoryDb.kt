@@ -76,6 +76,9 @@ fun PartRow.isLow(): Boolean = ReorderList.isLow(quantity, minQty)
 fun PartRow.link(): String =
     productUrl.ifBlank { Links.productUrl(distributor, distributorPn, mpn).orEmpty() }
 
+/** The datasheet link, or a web search for one when no lookup saved it; blank when the part has no number. */
+fun PartRow.datasheet(): String = Links.datasheetUrl(datasheetUrl, distributorPn, mpn).orEmpty()
+
 data class Match(val row: PartRow, val matchedOn: String)
 
 /** One save from the review screen. */
