@@ -49,8 +49,8 @@ To build locally instead: open the folder in Android Studio and press Run. Min A
   screen groups by category with filter chips, and the CSV has a Category column.
 - **Value, package and datasheet**: the value (10kΩ, 100nF, 4.7µH), tolerance, voltage and package (0603, SOT-23,
   MSOP-16) are read from the description (or Mouser's attributes) and shown as small chips on each inventory row. A
-  lookup also saves the datasheet link. Each inventory row has a datasheet icon (also a *Datasheet* button in the part
-  dialog) that opens it; parts without a saved link get a web search for "<MPN> datasheet" instead. Search understands values and packages:
+  lookup also saves the datasheet link. Each inventory row has a datasheet icon (also a *Datasheet* button on the part
+  page) that opens it; parts without a saved link get a web search for "<MPN> datasheet" instead. Search understands values and packages:
   `10k 0603` finds a 10kΩ 0603 resistor (10k = 10K = 10kΩ = 10000 = 4k7-style codes), `0.1uF` = `100nF`, `sot23` =
   `SOT-23`, `1%` matches the tolerance. Existing parts get these filled in from their description when you update.
   The CSV has Value, Tolerance, Voltage, Package and Datasheet columns.
@@ -62,12 +62,12 @@ To build locally instead: open the folder in Android Studio and press Run. Min A
   ("Checking Mouser…" under the unit cost; the form stays usable and you can save before it finishes). It uses the
   Mouser P/N on Mouser labels, otherwise the MPN. It runs once per scan; the button is there for a retry after you edit
   the part number. Turn it off in Settings → *Look up on Mouser after each scan*.
-- **Refresh prices** (circular-arrow icon on the Inventory screen) looks up every part with a Mouser part number and
+- **Refresh prices** (⋮ menu on the Inventory screen) looks up every part with a Mouser part number and
   updates its unit cost, description, link and category, then shows e.g. "Updated 38, not found 2". It sends one request
   every 2.2 s to stay under Mouser's limit of about 30 a minute (so 100 parts take about 4 minutes; keep the screen
   open) and stops cleanly on a rate-limit or key error, keeping what was already updated. A category you picked by hand
-  (in the review screen or the edit dialog) is remembered and never overwritten by a lookup or refresh.
-  The edit dialog shows where and when the price came from ("Price from Mouser, Oct 18").
+  (in the review screen or on the part page) is remembered and never overwritten by a lookup or refresh.
+  The part page shows where and when the price came from ("Price from Mouser, Oct 18").
 - **Settings → DigiKey API** (Client ID and Client Secret of an app you create at developer.digikey.com with the
   Product Information API v4) turns on "Look up on DigiKey" for DigiKey labels: price at your bag quantity (from the
   packaging on the label, e.g. Cut Tape), DigiKey's description, manufacturer, MPN, product page and category. It
@@ -104,7 +104,7 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   on the review screen (the part's main bin if it's blank), so Set on a part kept in two bins only resets that bin.
 - **Bin / location** is remembered for the next scan, handy when filling one drawer at a time.
 - **Stock in several bins**: a part can be in more than one place (200 in drawer A3, a reel on shelf R2); its quantity
-  is the total. Scanning into another bin adds the pieces there. In the edit dialog, *Move some to another bin…* moves N
+  is the total. Scanning into another bin adds the pieces there. On the part page, *Move* moves N
   pieces from one bin to another (new or existing); a part in several bins shows a count per bin to correct. *Use*
   takes from the main bin first, then the others. **Locations** (box icon on the Inventory screen) lists every bin with
   how many parts and pieces it holds; tap a bin to see its parts, or the pencil to rename it on every part at once
@@ -112,10 +112,14 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   moved each part's quantity into its bin without changing anything else.
 - Entrust kit labels print a per-board quantity (Qty 29) and a kit count (Qty 15). The app pre-fills the
   per-board number and offers the product; count the bag if you're not sure which applies.
-- **Inventory** (top right on the scan screen) lists everything with search. Tap a part to change the
-  quantity, bin or description, or delete it.
-- **Using parts**: in a part's edit dialog, set *Use* with − / + and Save; the count drops and the scan log gets a
-  negative "use" entry. **Build kit** (wrench icon on the Inventory screen): pick a kit, enter the number of boards,
+- **Inventory** (top right on the scan screen): a collapsing header with stat tiles (parts, pieces, value, low stock:
+  tap it to filter), category chips with counts, sticky category headers and the search icon in the top bar (matches
+  are highlighted). **Swipe a row right to use 1, left to add 1** (Undo in the message). Tap a part for its full-screen
+  page: photos, a big count with − / +, *Datasheet*, *Open on Mouser/DigiKey*, *Use…*, *Move*, *Label*, *History*, and
+  sections for stock by bin, price, specs, identifiers and notes. The pencil edits them in place; ⋮ → *Delete part*.
+  Transitions follow the system *Remove animations* setting.
+- **Using parts**: − on a part's page uses one, *Use…* asks how many; the count drops and the scan log gets a
+  negative "use" entry. **Build kit** (⋮ menu on the Inventory screen): pick a kit, enter the number of boards,
   check the list (parts that would go below 0 are flagged), then *Use parts* subtracts per board × boards from every
   part. Kits are learned when you save a bag with its Entrust kit label (kit, per-board Qty and REF DES are stored).
   Counts never go below 0; you're asked to confirm first.
@@ -130,12 +134,12 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   a project leaves stock alone.
 - **Undo and history**: after every save (scan, edit, use, move, delete, kit or project build, order import) a bar
   at the bottom offers *Undo* for about 10 seconds; it puts the part(s) back exactly as they were (bins and kit
-  membership included). A deleted part comes back with Undo too. *History* in a part's dialog lists every change with
+  membership included). A deleted part comes back with Undo too. *History* on a part's page lists every change with
   its date, old → new quantity and what else changed (bin, price, description…); saves from before this feature are
   shown from the scan log. Undo works for changes up to 30 days old (older "before" copies are dropped to keep the
   database small; the history lines stay). Undone scans stay in the scan log marked "undone", so the duplicate-bag
   check ignores them. A CSV restore isn't recorded in the history (use a backup file to go back).
-- **QR labels**: *Label* in a part's dialog, *Make QR labels for the shown parts…* in the Inventory share menu (filter
+- **QR labels**: *Label* on a part's page, *Make QR labels for the shown parts…* in the Inventory ⋮ menu (filter
   by category or bin first), or the QR icon next to a bin on the Locations screen (a bin label, or labels for all its
   parts). Pick 62 × 29 mm (Brother DK), 2 × 1 in thermal, or a Letter sheet of 30 (Avery 5160), then *Share* the PDF to
   your label printer's app or *Print* with Android printing. Each label has a QR code with a short app-only text
@@ -143,7 +147,7 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   shutter: a part label opens that part (to use or correct stock), a bin label sets the bin for the next saves. Other QR
   codes are ignored. The PDF is drawn on the phone; nothing is sent anywhere.
 - **Photos**: the label photo from a scan is kept as the part's thumbnail (shown on its inventory row) when the part has
-  no photo yet; later scans of the same part don't add more. In a part's dialog, *Take photo* or *Add from gallery*
+  no photo yet; later scans of the same part don't add more. On a part's page, *Take photo* or *Add from gallery*
   adds more (of the bag or the part itself); tap a thumbnail to view it full screen (pinch to zoom) or delete it. Photos
   are resized to 1600 px JPEGs (a few hundred KB each) in the app's private storage. Deleting a part removes its photos
   (Undo brings them back; the files are removed for good after 30 days). Export → *Share / Save inventory + photos
@@ -151,15 +155,15 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   **Photos are not in Android's cloud backup** (that backup stops working past 25 MB, which a few hundred photos would
   pass, and it would take the database backup down with it); a phone-to-phone transfer does include them. Use the zip
   export to keep a copy of the photos.
-- **Low stock**: set an optional *Minimum* in a part's edit dialog. Parts at or below it show their count in red,
+- **Low stock**: set an optional *Minimum* on a part's page (pencil). Parts at or below it show their count in red,
   the *Low stock* chip lists them and the summary line counts them. Export → *Reorder list CSV* lists the parts below
   their minimum with the quantity to order (minimum − on hand, rounded up: exact below 10, then to 5s, 10s, 50s, 100s),
   MPN, last unit price and link. Its first two columns, *Mouser Part Number* and *Quantity*, are what Mouser's BOM tool
   asks for; DigiKey parts have their part number in a separate column.
-- **Export** (share icon on the Inventory screen): share or save the inventory CSV, or the scan log CSV
+- **Export** (⋮ menu on the Inventory screen): share or save the inventory CSV, or the scan log CSV
   (every save with the raw OCR text). *Quantity* is the total and *Location* the main bin; the last column,
   *Locations*, lists stock per bin like `A3: 200; R2: 1000` and is read back by *Restore from CSV*. The CSV opens directly in Google Sheets or Excel.
-- **Import an order** (share icon on the Inventory screen → *Import Mouser / DigiKey order CSV…*): pick a CSV exported
+- **Import an order** (⋮ menu on the Inventory screen → *Import Mouser / DigiKey order CSV…*): pick a CSV exported
   from Mouser (order history or cart) or DigiKey (order or cart). Mouser vs DigiKey is told from the part-number column
   (or DigiKey's `-ND` numbers). Columns are found by keywords in the header (*Mouser No/#*, *Mfr. No*, *Manufacturer
   Part/Product Number*, *Digi-Key Part Number*, *Customer No/Reference*, *Quantity / Order Qty. / Qty Shipped*,
@@ -198,9 +202,12 @@ app/src/main/java/com/partstock/scanner/
   parse/ScanMerger.java      Votes field by field across a burst of reads
   Updater.kt                 Checks GitHub releases, downloads and installs a newer APK
   ReviewScreen.kt            Edit fields, stock check, save
-  InventoryScreen.kt         List, search, filters, export menu
+  InventoryScreen.kt         Inventory screen: top bar, search, menu, list ↔ part page transition
+  InventoryList.kt           Stat tiles, category chips, sticky headers, swipeable rows, empty states
+  PartDetails.kt             Full-screen part page, edited in place
+  Motion.kt                  Shared-element helpers, Remove-animations check, category icons
   InventoryViewModel.kt      Loads parts/photos/bins on IO, reloads on DB changes, debounced search + filters
-  PartDialogs.kt             Part edit dialog, move between bins, history
+  PartDialogs.kt             Move between bins, history
   InventoryTools.kt          Refresh prices, build kit dialogs
   LocationsScreen.kt         Bins with part / piece counts, rename everywhere
   Labels.kt                  QR label PDFs (PdfDocument + ZXing encoder), share / print

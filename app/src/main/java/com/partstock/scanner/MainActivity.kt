@@ -10,6 +10,17 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -134,9 +145,17 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
         )
     }
 
+    val reduceMotion = rememberReduceMotion()
     Box(Modifier.fillMaxSize()) {
     key(dataVersion) {
-    when (val s = screen) {
+    // Shared-axis style: forward slides in from the right, back reverses it; none with "Remove animations".
+    AnimatedContent(
+        targetState = screen,
+        contentKey = { it::class },
+        transitionSpec = { screenTransition(reduceMotion) },
+        label = "screens",
+    ) { s ->
+    when (s) {
         Screen.Scan -> ScanScreen(
             partCount = partCount,
             onInventory = { screen = Screen.Inventory() },
@@ -194,6 +213,7 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
             BackHandler { back() }
             InventoryScreen(
                 vm = vm, secrets = secrets, onBack = ::back,
+                onScan = { screen = Screen.Scan },
                 onProjects = { screen = Screen.Projects },
                 onLocations = { screen = Screen.Locations },
                 bin = s.bin,
@@ -218,11 +238,25 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
         }
     }
     }
+    }
     SnackbarHost(
         snackbar,
         Modifier.align(Alignment.BottomCenter).navigationBarsPadding().imePadding().padding(bottom = 8.dp),
     )
     }
+}
+
+private fun Screen.depth(): Int = when (this) {
+    Screen.Scan -> 0
+    is Screen.Review, Screen.Settings, is Screen.Inventory -> 1
+    Screen.Locations, Screen.Projects -> 2
+}
+
+private fun AnimatedContentTransitionScope<Screen>.screenTransition(reduceMotion: Boolean): ContentTransform {
+    if (reduceMotion) return EnterTransition.None togetherWith ExitTransition.None
+    val dir = if (targetState.depth() >= initialState.depth()) 1 else -1
+    return (slideInHorizontally(tween(300)) { w -> dir * w / 5 } + fadeIn(tween(300))) togetherWith
+        (slideOutHorizontally(tween(300)) { w -> -dir * w / 5 } + fadeOut(tween(150)))
 }
 
 @Composable

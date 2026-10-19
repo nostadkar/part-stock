@@ -1211,6 +1211,27 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         return total
     }
 
+    /** Adds [qty] pieces to the part's main bin (the + stepper and swipe on the Inventory screen). Returns the new total. */
+    fun addPieces(id: Long, qty: Int): Int? {
+        val db = writableDatabase
+        db.beginTransaction()
+        val total = try {
+            val r = db.rawQuery("SELECT * FROM parts WHERE id = ?", arrayOf(id.toString())).use { c ->
+                if (c.moveToFirst()) c.toRow() else null
+            } ?: return null
+            val snap = snapshot(db, id)
+            val t = writeStock(db, id, Locations.add(stockOrLegacy(db, r), r.location, qty), r.location)
+            db.update("parts", ContentValues().apply { put("updated_at", now()) }, "id = ?", arrayOf(id.toString()))
+            record(db, id, "adjust", snap)
+            db.setTransactionSuccessful()
+            t
+        } finally {
+            db.endTransaction()
+        }
+        fireChanged()
+        return total
+    }
+
     private fun useTx(db: SQLiteDatabase, id: Long, qty: Int, note: String, now: String): Int? {
         val r = db.rawQuery("SELECT * FROM parts WHERE id = ?", arrayOf(id.toString())).use { c ->
             if (c.moveToFirst()) c.toRow() else null
