@@ -181,7 +181,7 @@ fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Settings") },
+                title = { Text("Settings"); error("Deliberately broken screen (smoke test check)") },
                 navigationIcon = {
                     IconButton(onClick = onDone) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
                 },
