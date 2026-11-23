@@ -531,6 +531,8 @@ fun InventoryScreen(
                 importingOrder = false
                 if (msg != null) UndoOffer.offer(context, msg, db.lastChange)
             },
+            defaultBin = prefs?.lastLocation.orEmpty(),
+            knownBins = data.locations.map { it.name }.filterNot { it == Locations.UNASSIGNED },
         )
     }
 

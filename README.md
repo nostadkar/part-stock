@@ -234,6 +234,10 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   lines and *Add*: each is added to stock and matched to existing parts like a scan, with the file's unit price, a
   link and a category. The order number comes from the file (Sales Order #) or its name and can be edited; each
   order line is remembered, so importing the same order again shows "Already imported" and leaves those lines unticked.
+  The lines open on a full-screen page: summary chips (*N lines · X new · Y restocks · Z already imported · total*),
+  filter chips (All / New / Restock / Already imported) with *Select all* / *None*, one card per line with a status chip
+  (*New*, *In stock 12 → 22*, *Imported Nov 3*) and its own bin (new parts default to the last bin used, restocks to
+  the part's bin; *Bin for all…* sets the shown lines at once), and a bottom bar with the ticked total and *Add N lines*.
 - **Settings** is a column of cards, each with a status chip (Mouser and DigiKey "Key saved" / "Not set", backup
   age, amber after 7 days and red if the last one failed, file sync state, and "Update available"). Cards open and
   close with a tap and remember it; one with a problem opens by itself. The version and build number are at the bottom.
@@ -295,6 +299,7 @@ app/src/main/java/com/partstock/scanner/
   parse/PartSort.java        Inventory sort orders and List / Compact / Grid views (pure Java, unit tested)
   parse/ProjectStatus.java   Projects list card: line counts, blockers, state chip and sort (pure Java, unit tested)
   parse/OrderCsv.java        Order CSV column mapping (pure Java, unit tested)
+  parse/OrderLines.java      Order import page: line status, counts, totals
   parse/InventoryCsv.java    CSV read/write for export and restore (pure Java, unit tested)
   AutoBackup.kt              Writes the inventory CSV to a picked folder after each save
   FileSync.kt                Rewrites one picked file (e.g. on Google Drive) with the inventory CSV after each change
