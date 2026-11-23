@@ -229,9 +229,11 @@ fun LocationsScreen(
             title = { Text("Rename ${b.name}") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        name, { name = it }, label = { Text("New name") }, singleLine = true,
-                        keyboardOptions = codeKeys(last = true), modifier = Modifier.bringIntoViewOnFocus(),
+                    // Picking an existing bin here is a merge (said below), so the picker offers them too.
+                    BinPicker(
+                        name, { name = it }, label = "New name",
+                        bins = bins,
+                        exclude = b.name, showRecent = false, last = true,
                     )
                     Text(
                         if (existing) "That bin exists already: the parts are merged into it and counts added."

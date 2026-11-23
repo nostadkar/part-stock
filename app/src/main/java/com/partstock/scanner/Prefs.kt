@@ -1,6 +1,7 @@
 package com.partstock.scanner
 
 import android.content.Context
+import com.partstock.scanner.parse.Locations
 
 class Prefs(context: Context) {
     private val sp = context.getSharedPreferences("partstock", Context.MODE_PRIVATE)
@@ -8,7 +9,20 @@ class Prefs(context: Context) {
     /** Bin/drawer used on the last save, pre-filled on the next scan. */
     var lastLocation: String
         get() = sp.getString("lastLocation", "") ?: ""
-        set(v) = sp.edit().putString("lastLocation", v.trim()).apply()
+        set(v) {
+            sp.edit().putString("lastLocation", v.trim()).apply()
+            noteBin(v)
+        }
+
+    /** Bins used most recently, newest first (at most 5), offered as chips in the bin picker. */
+    var recentBins: List<String>
+        get() = (sp.getString("recentBins", "") ?: "").split('\n').filter { it.isNotBlank() }
+        set(v) = sp.edit().putString("recentBins", v.joinToString("\n")).apply()
+
+    /** Records that [bin] was just used (blank and "Unassigned" are ignored). */
+    fun noteBin(bin: String) {
+        recentBins = Locations.remember(recentBins, bin.replace('\n', ' '), 5)
+    }
 
     /** Last time the app checked GitHub for a newer build (epoch ms). */
     var lastUpdateCheck: Long
@@ -105,7 +119,10 @@ class Prefs(context: Context) {
     /** Bin every bag of the current batch goes into (set once at the top of the scan screen). */
     var batchBin: String
         get() = sp.getString("batchBin", "") ?: ""
-        set(v) = sp.edit().putString("batchBin", v.trim()).apply()
+        set(v) {
+            sp.edit().putString("batchBin", v.trim()).apply()
+            noteBin(v)
+        }
 
     /** Android 12+: color the app from the wallpaper (dynamic color); off = the app's own brand colors. */
     var dynamicColor: Boolean

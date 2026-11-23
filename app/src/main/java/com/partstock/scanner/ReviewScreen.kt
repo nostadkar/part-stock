@@ -571,15 +571,8 @@ fun ReviewScreen(
                     modifier = Modifier.weight(1f).focusRequester(focus.getValue(LabelBarcode.F_QTY))
                         .onFocusChanged { focusChanged(FieldReader.Field.QUANTITY, it.isFocused) },
                 )
-                OutlinedTextField(
-                    value = location,
-                    onValueChange = { location = it },
-                    label = { Text("Bin / location") },
-                    singleLine = true,
-                    keyboardOptions = codeKeys(),
-                    modifier = Modifier.weight(1f).bringIntoViewOnFocus(),
-                )
             }
+            BinPicker(location, { location = it }, modifier = Modifier.fillMaxWidth())
 
             KitHint(part) { qty = it.toString() }
 

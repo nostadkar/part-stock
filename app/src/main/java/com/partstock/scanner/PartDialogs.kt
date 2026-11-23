@@ -39,7 +39,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -86,6 +85,8 @@ internal fun MoveDialog(
     onMove: (String, String, Int) -> Unit,
 ) {
     val sources = bins.filterValues { it > 0 }.keys.toList()
+    val context = LocalContext.current
+    val prefs = remember { Prefs(context) }
     var from by remember { mutableStateOf(sources.firstOrNull()) }
     var to by remember { mutableStateOf("") }
     var qtyText by remember { mutableStateOf(sources.firstOrNull()?.let { bins[it]?.toString() }.orEmpty()) }
@@ -121,22 +122,19 @@ internal fun MoveDialog(
                     supportingText = { Text(if (n > have) "Only $have in $from" else "$have in $from") },
                     isError = n > have,
                 )
-                OutlinedTextField(
-                    to, { to = it }, label = { Text("To bin") }, singleLine = true,
-                    keyboardOptions = codeKeys(last = true), modifier = Modifier.bringIntoViewOnFocus(),
+                BinPicker(
+                    to, { to = it }, label = "To bin",
+                    bins = binsOrNames(knownBins, LocalBins.current), exclude = from, last = true,
                 )
-                val others = knownBins.filter { k -> from == null || !Locations.same(k, from) }
-                if (others.isNotEmpty()) {
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        others.forEach { b ->
-                            FilterChip(selected = Locations.same(b, to) && to.isNotBlank(), onClick = { to = b }, label = { Text(b) })
-                        }
-                    }
-                }
             }
         },
         confirmButton = {
-            TextButton(enabled = ok, onClick = { from?.let { onMove(it, to.trim(), n) } }) { Text("Move") }
+            TextButton(enabled = ok, onClick = {
+                from?.let {
+                    prefs.noteBin(to)
+                    onMove(it, to.trim(), n)
+                }
+            }) { Text("Move") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )

@@ -87,4 +87,46 @@ public class LocationsTest {
         assertEquals("", Locations.summary(m("Unassigned", 200)));
         assertEquals("A3: 200 · R2: 1000", Locations.summary(m("A3", 200, "R2", 1000)));
     }
+
+    @Test
+    public void squashIgnoresCasePunctuationAndLeadingZeros() {
+        assertEquals("a3", Locations.squash("A-3"));
+        assertEquals("a3", Locations.squash(" a 3 "));
+        assertEquals("a3", Locations.squash("A03"));
+        assertEquals("a10", Locations.squash("A10"));
+        assertEquals("a0", Locations.squash("A0"));
+        assertEquals("drawer1", Locations.squash("Drawer #1"));
+    }
+
+    @Test
+    public void closeMatchAsksBeforeCreatingANearDuplicate() {
+        java.util.List<String> bins = java.util.Arrays.asList("A3", "R2", "Drawer 1", "Unassigned");
+        assertEquals("A3", Locations.closeMatch(bins, "A-3"));
+        assertEquals("A3", Locations.closeMatch(bins, "a03"));
+        assertEquals("Drawer 1", Locations.closeMatch(bins, "drawer1"));
+        assertEquals(null, Locations.closeMatch(bins, "a3")); // exact, ignoring case: it is that bin
+        assertEquals(null, Locations.closeMatch(bins, "A4")); // a real new bin
+        assertEquals(null, Locations.closeMatch(bins, ""));
+        assertTrue(Locations.exists(bins, " r2 "));
+        assertTrue(!Locations.exists(bins, "A-3"));
+    }
+
+    @Test
+    public void suggestPutsPrefixMatchesFirst() {
+        java.util.List<String> bins = java.util.Arrays.asList("B13", "A3", "A30", "Unassigned", "Shelf A3", "R2");
+        assertEquals(java.util.Arrays.asList("A3", "A30", "Shelf A3"), Locations.suggest(bins, "a-3", 10));
+        assertEquals(java.util.Arrays.asList("B13", "A3"), Locations.suggest(bins, "", 2));
+        assertEquals(java.util.Arrays.asList("B13"), Locations.suggest(bins, "13", 10));
+        assertEquals(java.util.Arrays.asList(), Locations.suggest(bins, "Z", 10));
+    }
+
+    @Test
+    public void rememberKeepsFiveDistinctRecentBins() {
+        java.util.List<String> r = java.util.Arrays.asList("A3", "R2", "B1", "C4", "D5");
+        assertEquals(java.util.Arrays.asList("R2", "A3", "B1", "C4", "D5"), Locations.remember(r, "r2", 5));
+        assertEquals(java.util.Arrays.asList("E6", "A3", "R2", "B1", "C4"), Locations.remember(r, " E6 ", 5));
+        assertEquals(r, Locations.remember(r, "", 5));
+        assertEquals(r, Locations.remember(r, "Unassigned", 5));
+        assertEquals(java.util.Arrays.asList("A3"), Locations.remember(null, "A3", 5));
+    }
 }

@@ -446,33 +446,26 @@ private fun OrderBinDialog(
     title: String, initial: String, knownBins: List<String>, onDismiss: () -> Unit, onPick: (String) -> Unit,
 ) {
     var text by remember { mutableStateOf(initial) }
+    val context = LocalContext.current
+    val prefs = remember { Prefs(context) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    text, { text = it },
-                    label = { Text("Bin") },
-                    placeholder = { Text("e.g. A3") },
-                    singleLine = true,
-                    keyboardOptions = codeKeys(last = true),
-                    modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
+                BinPicker(
+                    text, { text = it }, label = "Bin", placeholder = "e.g. A3",
+                    bins = binsOrNames(knownBins, LocalBins.current), last = true,
+                    modifier = Modifier.fillMaxWidth(),
                 )
-                if (knownBins.isNotEmpty()) {
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        knownBins.forEach { b ->
-                            FilterChip(
-                                selected = Locations.normalize(b) == Locations.normalize(text),
-                                onClick = { text = b },
-                                label = { Text(b) },
-                            )
-                        }
-                    }
-                }
             }
         },
-        confirmButton = { TextButton(onClick = { onPick(text.trim()) }) { Text("Use") } },
+        confirmButton = {
+            TextButton(onClick = {
+                prefs.noteBin(text)
+                onPick(text.trim())
+            }) { Text("Use") }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

@@ -179,4 +179,99 @@ public final class Locations {
         }
         return sb.toString();
     }
+
+    // ---- Bin picker: matching typed text against the bins that already exist ----
+
+    /**
+     * Bin name reduced for "is this the same bin?" checks: lower case, letters and digits only, leading zeros of a
+     * number dropped ("A-3", "a 3" and "A03" all become "a3").
+     */
+    public static String squash(String bin) {
+        String b = bin == null ? "" : bin.trim().toLowerCase(java.util.Locale.ROOT);
+        StringBuilder sb = new StringBuilder();
+        boolean inNumber = false;
+        for (int i = 0; i < b.length(); i++) {
+            char c = b.charAt(i);
+            if (Character.isDigit(c)) {
+                // Skip a leading 0 unless it is the number's last digit ("A0" stays "a0").
+                boolean nextDigit = i + 1 < b.length() && Character.isDigit(b.charAt(i + 1));
+                if (!inNumber && c == '0' && nextDigit) continue;
+                sb.append(c);
+                inNumber = true;
+            } else if (Character.isLetter(c)) {
+                sb.append(c);
+                inNumber = false;
+            } else {
+                inNumber = false;
+            }
+        }
+        return sb.toString();
+    }
+
+    /** True when [typed] names one of [bins] exactly (ignoring case and spaces), so nothing new is created. */
+    public static boolean exists(List<String> bins, String typed) {
+        for (String b : bins) if (same(b, typed)) return true;
+        return false;
+    }
+
+    /**
+     * The existing bin [typed] probably means ("A-3" → "A3"), or null when [typed] is blank, names a bin exactly, or
+     * matches nothing. Used for the "Did you mean A3?" guard before a new bin is created.
+     */
+    public static String closeMatch(List<String> bins, String typed) {
+        if (typed == null || typed.trim().isEmpty() || exists(bins, typed)) return null;
+        String t = squash(typed);
+        if (t.isEmpty()) return null;
+        for (String b : bins) {
+            if (UNASSIGNED.equalsIgnoreCase(b)) continue;
+            if (squash(b).equals(t)) return b;
+        }
+        return null;
+    }
+
+    /**
+     * Bins to offer while typing, best first: all bins (in the given order) for blank text; otherwise bins that
+     * start with the text, then bins that contain it (both compared squashed, so "a-3" finds "A3"). Never
+     * "Unassigned"; at most [limit].
+     */
+    public static List<String> suggest(List<String> bins, String typed, int limit) {
+        String t = squash(typed);
+        String raw = typed == null ? "" : typed.trim().toLowerCase(java.util.Locale.ROOT);
+        List<String> starts = new ArrayList<>();
+        List<String> contains = new ArrayList<>();
+        for (String b : bins) {
+            if (b == null || b.trim().isEmpty() || UNASSIGNED.equalsIgnoreCase(b.trim())) continue;
+            if (keyIn(starts, b) || keyIn(contains, b)) continue;
+            String sb = squash(b);
+            if (raw.isEmpty() || sb.startsWith(t) || b.toLowerCase(java.util.Locale.ROOT).startsWith(raw)) starts.add(b);
+            else if ((!t.isEmpty() && sb.contains(t)) || b.toLowerCase(java.util.Locale.ROOT).contains(raw)) contains.add(b);
+        }
+        List<String> out = new ArrayList<>(starts);
+        out.addAll(contains);
+        return out.size() > limit ? new ArrayList<>(out.subList(0, Math.max(0, limit))) : out;
+    }
+
+    private static boolean keyIn(List<String> list, String bin) {
+        for (String k : list) if (same(k, bin)) return true;
+        return false;
+    }
+
+    /**
+     * Recent-bins list after [bin] was used: it moves to the front, the same bin isn't listed twice, blank and
+     * "Unassigned" are not recorded, and at most [max] are kept.
+     */
+    public static List<String> remember(List<String> recent, String bin, int max) {
+        List<String> out = new ArrayList<>();
+        String b = bin == null ? "" : bin.trim();
+        if (recent != null) for (String r : recent) if (r != null && same(r, b)) b = r.trim(); // keep its spelling
+        if (!b.isEmpty() && !UNASSIGNED.equalsIgnoreCase(b)) out.add(b);
+        if (recent != null) {
+            for (String r : recent) {
+                if (out.size() >= max) break;
+                if (r == null || r.trim().isEmpty() || UNASSIGNED.equalsIgnoreCase(r.trim()) || keyIn(out, r)) continue;
+                out.add(r.trim());
+            }
+        }
+        return out.size() > max ? new ArrayList<>(out.subList(0, Math.max(0, max))) : out;
+    }
 }

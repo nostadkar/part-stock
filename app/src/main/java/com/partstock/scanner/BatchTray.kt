@@ -34,7 +34,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -68,14 +67,7 @@ fun BatchBinChip(bin: String, onBin: (String) -> Unit) {
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Every bag saved from the batch goes into this bin.", style = MaterialTheme.typography.bodySmall)
-                    OutlinedTextField(
-                        value = text,
-                        onValueChange = { text = it },
-                        label = { Text("Bin / location") },
-                        singleLine = true,
-                        keyboardOptions = codeKeys(last = true),
-                        modifier = Modifier.bringIntoViewOnFocus(),
-                    )
+                    BinPicker(text, { text = it }, last = true)
                 }
             },
             confirmButton = {

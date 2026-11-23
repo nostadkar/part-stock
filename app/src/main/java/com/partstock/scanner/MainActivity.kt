@@ -119,7 +119,10 @@ class MainActivity : ComponentActivity() {
         setContent {
             // Long jobs (price refresh, zip export, update download) live here, outside any screen.
             val jobs: JobsViewModel = viewModel { JobsViewModel(applicationContext, db) }
-            CompositionLocalProvider(LocalJobs provides jobs) {
+            // Same instance App() uses; its bins feed every bin picker.
+            val inventoryVm: InventoryViewModel = viewModel { InventoryViewModel(db) }
+            val inventoryData by inventoryVm.data.collectAsStateWithLifecycle()
+            CompositionLocalProvider(LocalJobs provides jobs, LocalBins provides inventoryData.locations) {
                 PartStockTheme { App(prefs, db, secrets) }
             }
         }
