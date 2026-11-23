@@ -313,6 +313,7 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
                 vm = vm, prefs = prefs,
                 onBack = { screen = Screen.Inventory() },
                 onOpen = { screen = Screen.Inventory(it) },
+                onScan = { screen = Screen.Scan },
             )
         }
 

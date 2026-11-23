@@ -45,16 +45,40 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.partstock.scanner.parse.Locations
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
+import androidx.compose.ui.text.style.TextOverflow
+import com.partstock.scanner.parse.BinStats
+import com.partstock.scanner.parse.ChartData
 
-/** Every bin with how many parts and pieces it holds. Tap a bin to see its parts; the pencil renames it everywhere. */
+/**
+ * Every bin with how many parts and pieces it holds, a fill bar (pieces vs. the fullest bin), its top categories and
+ * a few thumbnails; search and sort at the top. Tap a bin to see its parts; the pencil renames it everywhere.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LocationsScreen(vm: InventoryViewModel, prefs: Prefs, onBack: () -> Unit, onOpen: (String) -> Unit) {
+fun LocationsScreen(
+    vm: InventoryViewModel,
+    prefs: Prefs,
+    onBack: () -> Unit,
+    onOpen: (String) -> Unit,
+    onScan: (() -> Unit)? = null,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     // Loaded on IO by the ViewModel and refreshed after every change.
     val data by vm.data.collectAsStateWithLifecycle()
     val bins = data.locations
+    // Fill, top categories and thumbnails per bin, searched and sorted off the main thread.
+    val view by vm.locations.collectAsStateWithLifecycle()
+    val sort by vm.binSort.collectAsStateWithLifecycle()
+    val query by vm.binQuery.collectAsStateWithLifecycle()
     var renaming by remember { mutableStateOf<LocationSummary?>(null) }
     var labelMenu by remember { mutableStateOf<String?>(null) }
     var labels by remember { mutableStateOf<List<LabelItem>?>(null) }
@@ -69,25 +93,106 @@ fun LocationsScreen(vm: InventoryViewModel, prefs: Prefs, onBack: () -> Unit, on
             )
         },
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            if (data.loaded && bins.isEmpty()) {
+                EmptyState(
+                    icon = { Icon(Icons.Filled.Inventory2, contentDescription = null, modifier = Modifier.size(72.dp)) },
+                    title = "No bins yet",
+                    text = "Scan a part and pick a bin when you save it. Bins show up here with what's in them.",
+                    buttons = { if (onScan != null) Button(onClick = onScan) { Text("Scan a label") } },
+                )
+                return@Column
+            }
+            if (bins.size > 1) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { vm.binQuery.value = it },
+                    placeholder = { Text("Find a bin") },
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (query.isNotEmpty()) {
+                            IconButton(onClick = { vm.binQuery.value = "" }) {
+                                Icon(Icons.Filled.Close, contentDescription = "Clear search")
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    items(BinStats.Sort.entries.toList(), key = { it.name }) { s ->
+                        FilterChip(selected = sort == s, onClick = { vm.binSort.value = s }, label = { Text(s.title) })
+                    }
+                }
+            }
             Text(
-                "${bins.size} bin${if (bins.size == 1) "" else "s"} · tap one to see what's in it",
+                if (view.bins.size == view.total) "${view.total} bin${if (view.total == 1) "" else "s"} · tap one to see what's in it"
+                else "${view.bins.size} of ${view.total} bins",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(vertical = 8.dp),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
-            if (data.loaded && bins.isEmpty()) Text("No parts yet.", modifier = Modifier.padding(top = 24.dp))
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(bins, key = { it.name }) { b ->
+            if (view.loaded && view.bins.isEmpty() && bins.isNotEmpty()) {
+                Text(
+                    "No bin matches \"$query\".",
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 24.dp),
+                )
+            }
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
+            ) {
+                items(view.bins, key = { it.summary.name }) { bin ->
+                    val b = bin.summary
                     Card(Modifier.fillMaxWidth().clickable { onOpen(b.name) }) {
                         Row(Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
-                                Text(b.name, fontWeight = FontWeight.SemiBold)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        b.name, fontWeight = FontWeight.SemiBold, maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
+                                    )
+                                    bin.topCategories.forEach { c ->
+                                        Icon(
+                                            categoryIcon(c), contentDescription = c,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.padding(start = 6.dp).size(16.dp),
+                                        )
+                                    }
+                                }
                                 Text(
-                                    "${b.parts} part${if (b.parts == 1) "" else "s"} · ${b.pieces} pieces",
+                                    "${b.parts} part${if (b.parts == 1) "" else "s"} · ${b.pieces} piece${if (b.pieces == 1) "" else "s"}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                                BarMeter(
+                                    value = bin.fill.toDouble(),
+                                    max = 1.0,
+                                    contentDescription = "${b.pieces} pieces, ${ChartData.percent(bin.fill.toDouble())} of the fullest bin",
+                                    height = 6.dp,
+                                    animate = false,
+                                    modifier = Modifier.padding(top = 6.dp, end = 4.dp),
+                                )
+                                if (bin.preview.isNotEmpty()) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(top = 6.dp),
+                                    ) {
+                                        bin.preview.forEach { p -> PartImage(p, data.photos[p.id]?.firstOrNull(), 28.dp) }
+                                        val more = BinStats.more(b.parts, bin.preview.size)
+                                        if (more.isNotEmpty()) {
+                                            Text(
+                                                more, style = MaterialTheme.typography.labelMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(start = 4.dp),
+                                            )
+                                        }
+                                    }
+                                }
                             }
                             Box {
                                 IconButton(onClick = { labelMenu = b.name }) {

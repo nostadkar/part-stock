@@ -127,7 +127,8 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   is the total. Scanning into another bin adds the pieces there. On the part page, *Move* moves N
   pieces from one bin to another (new or existing); a part in several bins shows a count per bin to correct. *Use*
   takes from the main bin first, then the others. **Locations** (box icon on the Inventory screen) lists every bin with
-  how many parts and pieces it holds; tap a bin to see its parts, or the pencil to rename it on every part at once
+  how many parts and pieces it holds, a fill bar (pieces vs. the fullest bin), its top category icons and up to four
+  thumbnails (+N); search by name and sort by name, most parts, most pieces or emptiest first. Tap a bin to see its parts, or the pencil to rename it on every part at once
   (renaming onto an existing bin merges them). Parts saved without a bin are under *Unassigned*. Updating to this build
   moved each part's quantity into its bin without changing anything else.
 - Entrust kit labels print a per-board quantity (Qty 29) and a kit count (Qty 15). The app pre-fills the
@@ -232,12 +233,13 @@ app/src/main/java/com/partstock/scanner/
   InventoryViewModel.kt      Loads parts/photos/bins on IO, reloads on DB changes, debounced search + filters
   PartDialogs.kt             Move between bins, history
   InventoryTools.kt          Refresh prices, build kit dialogs
-  LocationsScreen.kt         Bins with part / piece counts, rename everywhere
+  LocationsScreen.kt         Bins with counts, fill bars, thumbnails, search/sort, rename everywhere
   Labels.kt                  QR label PDFs (PdfDocument + ZXing encoder), share / print
   UndoOffer.kt               Undo snackbar after saves
   parse/ChangeSummary.java   "What changed" line for the part history (pure Java, unit tested)
   parse/LabelCodes.java      QR label payloads PS:P:<id> / PS:L:<bin> (pure Java, unit tested)
   parse/Locations.java       Stock per bin: add, set, use, move, rename, CSV column (pure Java, unit tested)
+  parse/BinStats.java        Locations screen fill, top categories, sort and search (pure Java, unit tested)
   InventoryDb.kt             SQLite storage + CSV
   OrderImport.kt             Import a Mouser / DigiKey order CSV
   ProjectsScreen.kt          Projects / BOMs: buildable count, shortages, Build N

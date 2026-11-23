@@ -498,7 +498,7 @@ fun highlighted(text: String, query: String, mark: Color): AnnotatedString {
 }
 
 @Composable
-private fun EmptyState(
+internal fun EmptyState(
     icon: @Composable () -> Unit,
     title: String,
     text: String,

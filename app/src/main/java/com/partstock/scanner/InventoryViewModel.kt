@@ -2,6 +2,7 @@ package com.partstock.scanner
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.partstock.scanner.parse.BinStats
 import com.partstock.scanner.parse.Categories
 import com.partstock.scanner.parse.ChartData
 import com.partstock.scanner.parse.Locations
@@ -55,6 +56,29 @@ data class InventoryView(
 /** One Overview donut slice; [category] is null for the merged "Other" slice of the smaller categories. */
 data class OverviewSlice(val label: String, val category: String?, val value: Double, val fraction: Double)
 
+/** One bin on the Locations screen, with what's needed to draw its card. */
+class BinView(
+    val summary: LocationSummary,
+    /** Pieces relative to the fullest bin, 0…1. */
+    val fill: Float,
+    /** Up to 3 categories with the most parts in this bin, most first. */
+    val topCategories: List<String>,
+    /** Up to 4 parts to show as thumbnails, most pieces in this bin first. */
+    val preview: List<PartRow>,
+) : BinStats.Bin {
+    override fun name(): String = summary.name
+    override fun parts(): Int = summary.parts
+    override fun pieces(): Int = summary.pieces
+}
+
+/** The Locations screen after search and sort. */
+data class LocationsView(
+    val bins: List<BinView> = emptyList(),
+    /** All bins, before the search. */
+    val total: Int = 0,
+    val loaded: Boolean = false,
+)
+
 /**
  * Loads parts, photos and locations on [Dispatchers.IO] and reloads them whenever the database changes
  * ([InventoryDb.changes]). Search (debounced), category, low-stock and bin filters run here, off the main thread.
@@ -79,6 +103,14 @@ class InventoryViewModel(val db: InventoryDb) : ViewModel() {
         query.debounce { if (it.isBlank()) 0L else SEARCH_DEBOUNCE_MS },
         bucket, lowOnly, bin, lowestFirst,
     ) { q, b, low, bin, lowest -> Filters(q, b, low, bin, lowest) }
+
+    /** Locations screen sort and search. */
+    val binSort = MutableStateFlow(BinStats.Sort.NAME)
+    val binQuery = MutableStateFlow("")
+
+    val locations: StateFlow<LocationsView> = combine(data, binSort, binQuery) { d, sort, q -> buildLocations(d, sort, q) }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LocationsView())
 
     val view: StateFlow<InventoryView> = combine(data, filters) { d, f -> build(d, f) }
         .flowOn(Dispatchers.Default)
@@ -150,7 +182,33 @@ class InventoryViewModel(val db: InventoryDb) : ViewModel() {
         }
     }
 
+    private fun buildLocations(d: InventoryData, sort: BinStats.Sort, query: String): LocationsView {
+        val max = d.locations.maxOfOrNull { it.pieces } ?: 0
+        val bins = d.locations.map { b ->
+            // Parts in this bin with how many pieces each has there.
+            val inBin = d.parts.mapNotNull { p ->
+                val stock = p.bins()
+                if (Locations.keyOf(stock, b.name) == null) null else p to Locations.qtyIn(stock, b.name)
+            }
+            // Parts per category, in the usual category order so ties come out the same way everywhere.
+            val byCat = inBin.groupingBy { it.first.category }.eachCount()
+            val counts = LinkedHashMap<String, Int>()
+            (Categories.ALL + byCat.keys).forEach { c -> byCat[c]?.let { counts.putIfAbsent(c, it) } }
+            BinView(
+                summary = b,
+                fill = BinStats.fill(b.pieces, max),
+                topCategories = BinStats.topCategories(counts, 3),
+                preview = inBin.sortedByDescending { it.second }.take(PREVIEW).map { it.first },
+            )
+        }
+        val shown = BinStats.sort(bins.filter { BinStats.matches(it.summary.name, query) }, sort)
+        return LocationsView(shown, d.locations.size, d.loaded)
+    }
+
     companion object {
+        /** Thumbnails per bin card. */
+        const val PREVIEW = 4
+
         const val SEARCH_DEBOUNCE_MS = 150L
 
         /** The single group's header when sorted lowest stock first. */
