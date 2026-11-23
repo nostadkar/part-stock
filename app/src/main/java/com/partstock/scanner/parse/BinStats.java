@@ -129,4 +129,31 @@ public final class BinStats {
     public static String more(int total, int shown) {
         return total > shown ? "+" + (total - shown) : "";
     }
+
+    /** What shades the cells of the Locations grid (#59). */
+    public enum Shade {
+        PIECES("Pieces"),
+        PARTS("Parts");
+
+        public final String title;
+
+        Shade(String title) {
+            this.title = title;
+        }
+
+        public static Shade parse(String name) {
+            if (name != null) for (Shade s : values()) if (s.name().equals(name)) return s;
+            return PIECES;
+        }
+    }
+
+    /** What TalkBack reads for a grid cell: "A3, 12 parts, 340 pieces, 2 low" (the low part only when some are). */
+    public static String cellDescription(String name, int parts, int pieces, int low) {
+        StringBuilder b = new StringBuilder(name).append(", ");
+        if (parts == 0 && pieces == 0) return b.append("empty").toString();
+        b.append(parts).append(parts == 1 ? " part, " : " parts, ");
+        b.append(pieces).append(pieces == 1 ? " piece" : " pieces");
+        if (low > 0) b.append(", ").append(low).append(" low");
+        return b.toString();
+    }
 }

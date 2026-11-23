@@ -88,6 +88,8 @@ class BinView(
     val topCategories: List<String>,
     /** Up to 4 parts to show as thumbnails, most pieces in this bin first. */
     val preview: List<PartRow>,
+    /** Parts in this bin that are low on stock (the red dot in the grid view). */
+    val low: Int = 0,
 ) : BinStats.Bin {
     override fun name(): String = summary.name
     override fun parts(): Int = summary.parts
@@ -272,6 +274,7 @@ class InventoryViewModel(val db: InventoryDb) : ViewModel() {
                 fill = BinStats.fill(b.pieces, max),
                 topCategories = BinStats.topCategories(counts, 3),
                 preview = inBin.sortedByDescending { it.second }.take(PREVIEW).map { it.first },
+                low = inBin.count { it.first.isLow() },
             )
         }
         val shown = BinStats.sort(bins.filter { BinStats.matches(it.summary.name, query) }, sort)

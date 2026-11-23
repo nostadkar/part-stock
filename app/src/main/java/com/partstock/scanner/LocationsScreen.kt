@@ -55,10 +55,14 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.ui.text.style.TextOverflow
 import com.partstock.scanner.parse.BinStats
 import com.partstock.scanner.parse.ChartData
+import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material3.IconToggleButton
 
 /**
  * Every bin with how many parts and pieces it holds, a fill bar (pieces vs. the fullest bin), its top categories and
  * a few thumbnails; search and sort at the top. Tap a bin to see its parts; the pencil renames it everywhere.
+ * The Grid view (#59) draws bins named like drawers (A3) as a cabinet; see [LocationsGrid].
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -81,6 +85,16 @@ fun LocationsScreen(
     var renaming by remember { mutableStateOf<LocationSummary?>(null) }
     var labelMenu by remember { mutableStateOf<String?>(null) }
     var labels by remember { mutableStateOf<List<LabelItem>?>(null) }
+    var gridView by remember { mutableStateOf(prefs.locationsView == "GRID") }
+    var shade by remember { mutableStateOf(BinStats.Shade.parse(prefs.locationsShade)) }
+    val actions = remember(data) {
+        BinActions(
+            open = onOpen,
+            rename = { renaming = it },
+            binLabel = { labels = listOf(binLabel(it.name, it.parts)) },
+            partLabels = { b -> labels = data.parts.filter { Locations.keyOf(it.bins(), b.name) != null }.map(::partLabel) },
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -122,23 +136,59 @@ fun LocationsScreen(
                     contentPadding = PaddingValues(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    items(BinStats.Sort.entries.toList(), key = { it.name }) { s ->
-                        FilterChip(selected = sort == s, onClick = { vm.binSort.value = s }, label = { Text(s.title) })
+                    // The grid isn't sorted: there the chips pick what shades the cells.
+                    if (gridView) {
+                        items(BinStats.Shade.entries.toList(), key = { it.name }) { s ->
+                            FilterChip(
+                                selected = shade == s,
+                                onClick = {
+                                    shade = s
+                                    prefs.locationsShade = s.name
+                                },
+                                label = { Text("Shade: ${s.title.lowercase()}") },
+                            )
+                        }
+                    } else {
+                        items(BinStats.Sort.entries.toList(), key = { it.name }) { s ->
+                            FilterChip(selected = sort == s, onClick = { vm.binSort.value = s }, label = { Text(s.title) })
+                        }
                     }
                 }
             }
-            Text(
-                if (view.bins.size == view.total) "${view.total} bin${if (view.total == 1) "" else "s"} · tap one to see what's in it"
-                else "${view.bins.size} of ${view.total} bins",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            )
+            Row(Modifier.padding(start = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (view.bins.size == view.total) "${view.total} bin${if (view.total == 1) "" else "s"} · " +
+                        (if (gridView) "tap to open, hold for more" else "tap one to see what's in it")
+                    else "${view.bins.size} of ${view.total} bins",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f).padding(vertical = 8.dp),
+                )
+                listOf(false to "List view", true to "Grid view").forEach { (grid, label) ->
+                    IconToggleButton(
+                        checked = gridView == grid,
+                        onCheckedChange = {
+                            gridView = grid
+                            prefs.locationsView = if (grid) "GRID" else "LIST"
+                        },
+                    ) {
+                        Icon(
+                            if (grid) Icons.Filled.GridView else Icons.AutoMirrored.Filled.ViewList,
+                            contentDescription = label,
+                            tint = if (gridView == grid) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
             if (view.loaded && view.bins.isEmpty() && bins.isNotEmpty()) {
                 Text(
                     "No bin matches \"$query\".",
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 24.dp),
                 )
+            }
+            if (gridView) {
+                LocationsGrid(view.bins, shade, actions, Modifier.weight(1f))
+                return@Column
             }
             LazyColumn(
                 verticalArrangement = Arrangement.spacedBy(8.dp),

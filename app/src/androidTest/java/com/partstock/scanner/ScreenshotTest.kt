@@ -106,6 +106,13 @@ class ScreenshotTest {
         compose.onNodeWithTag("tab-LOCATIONS").performClick()
         compose.waitForIdle()
         shot("04-locations", suffix)
+        if (withParts) {
+            compose.onNodeWithContentDescription("Grid view").performClick()
+            compose.waitForIdle()
+            shot("04b-locations-grid", suffix)
+            compose.onNodeWithContentDescription("List view").performClick()
+            compose.waitForIdle()
+        }
 
         compose.onNodeWithTag("tab-PROJECTS").performClick()
         compose.waitForIdle()
@@ -149,6 +156,7 @@ class ScreenshotTest {
         prefs.batchMode = withParts // with parts: one queued bag, so the Review screen can be opened without a camera
         prefs.inventoryView = "LIST"
         prefs.inventorySort = "CATEGORY"
+        prefs.locationsView = "LIST"
         if (withParts) {
             val db = InventoryDb(context)
             listOf(

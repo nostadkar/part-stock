@@ -149,6 +149,16 @@ class Prefs(context: Context) {
         get() = sp.getString("inventoryView", "LIST") ?: "LIST"
         set(v) = sp.edit().putString("inventoryView", v).apply()
 
+    /** Locations layout (#59): "LIST" or "GRID" (bins named like A3 as a cabinet of drawers). */
+    var locationsView: String
+        get() = sp.getString("locationsView", "LIST") ?: "LIST"
+        set(v) = sp.edit().putString("locationsView", v).apply()
+
+    /** What shades the Locations grid cells: a BinStats.Shade name (PIECES or PARTS). */
+    var locationsShade: String
+        get() = sp.getString("locationsShade", "PIECES") ?: "PIECES"
+        set(v) = sp.edit().putString("locationsShade", v).apply()
+
     /** Settings → Appearance → Theme: a ThemeMode name (System, Light, Dark, Black). */
     var themeMode: String
         get() = sp.getString("themeMode", "SYSTEM") ?: "SYSTEM"

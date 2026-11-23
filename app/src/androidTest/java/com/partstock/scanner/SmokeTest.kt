@@ -52,6 +52,7 @@ class SmokeTest {
         prefs.batchMode = false
         prefs.inventoryView = "LIST"
         prefs.inventorySort = "CATEGORY"
+        prefs.locationsView = "LIST"
         if (parts.isNotEmpty()) {
             val db = InventoryDb(context)
             parts.forEach { db.save(it) }
@@ -241,6 +242,35 @@ class SmokeTest {
         compose.waitForIdle()
         compose.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasText("RC0603FR-0710KL"))
         compose.onAllNodesWithText("RC0603FR-0710KL").onFirst().assertExists()
+        Espresso.pressBack()
+        compose.waitForIdle()
+    }
+
+    /** Locations grid (#59): bins A1, A2, B1 show as cells with a TalkBack description, labeled, and one opens. */
+    @Test
+    fun locationsGrid() {
+        launch(
+            listOf(
+                part("RC0603FR-0710KL", 500, "A1", "RES 10K OHM 1% 1/10W 0603"),
+                part("GRM188R71H104KA93D", 200, "A2", "CAP CER 0.1UF 50V X7R 0603"),
+                part("LM358DR", 3, "B1", "IC OPAMP GP 2 CIRCUIT 8SOIC"),
+                part("NE555DR", 5, "Desk", "IC OSC SGL TIMER 8SOIC"),
+            ),
+        )
+        compose.onNodeWithText("Inventory (4)").performClick()
+        compose.waitForIdle()
+        tab("LOCATIONS").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Grid view").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("A1, 1 part, 500 pieces").assertExists()
+        compose.onNodeWithContentDescription("Desk, 1 part, 5 pieces").assertExists() // in "Other bins"
+        compose.onNodeWithText("Other bins").assertExists()
+        assertClickablesLabeled("Locations grid")
+        compose.onNodeWithContentDescription("B1, 1 part, 3 pieces").performClick()
+        compose.waitForIdle()
+        tab("INVENTORY").assertIsSelected() // the bin's parts
+        compose.onAllNodesWithText("LM358DR").onFirst().assertExists()
         Espresso.pressBack()
         compose.waitForIdle()
     }

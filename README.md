@@ -157,7 +157,10 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   takes from the main bin first, then the others. **Locations** (box icon on the Inventory screen) lists every bin with
   how many parts and pieces it holds, a fill bar (pieces vs. the fullest bin), its top category icons and up to four
   thumbnails (+N); search by name and sort by name, most parts, most pieces or emptiest first. Tap a bin to see its parts, or the pencil to rename it on every part at once
-  (renaming onto an existing bin merges them). Parts saved without a bin are under *Unassigned*. Updating to this build
+  (renaming onto an existing bin merges them). Parts saved without a bin are under *Unassigned*. The **Grid** toggle
+  (remembered) draws bins named like drawers (`A3`, `R2`) as a cabinet: rows by letter, columns by number, cells shaded
+  by pieces or number of parts, a red dot when a part there is low, empty drawers outlined. Tap a cell for its parts,
+  hold it to rename or print labels; other names (`Desk`, `A3-top`, *Unassigned*) are chips under the grid. Updating to this build
   moved each part's quantity into its bin without changing anything else.
 - Entrust kit labels print a per-board quantity (Qty 29) and a kit count (Qty 15). The app pre-fills the
   per-board number and offers the product; count the bag if you're not sure which applies.
@@ -300,6 +303,7 @@ app/src/main/java/com/partstock/scanner/
   InventoryTools.kt          Refresh prices, build kit dialogs
   Jobs.kt                    Background jobs (price refresh, zip, update download) and their progress cards
   LocationsScreen.kt         Bins with counts, fill bars, thumbnails, search/sort, rename everywhere
+  LocationsGrid.kt           Locations Grid view: drawer-named bins as a cabinet, other bins as chips
   Labels.kt                  QR label PDFs (PdfDocument + ZXing encoder), share / print
   UndoOffer.kt               Undo snackbar after saves
   Feedback.kt                One snackbar style for results and errors (Retry, TalkBack live region), Toast only without a screen

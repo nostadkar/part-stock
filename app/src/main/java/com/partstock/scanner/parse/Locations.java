@@ -1,9 +1,16 @@
 package com.partstock.scanner.parse;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Stock per storage location (bin). A part's stock is an ordered map bin → pieces; the part's total is the sum.
@@ -273,5 +280,120 @@ public final class Locations {
             }
         }
         return out.size() > max ? new ArrayList<>(out.subList(0, Math.max(0, max))) : out;
+    }
+
+    // ---- Cabinet grid (#59): drawer-style names like A3 laid out as rows (letters) and columns (number). ----
+
+    private static final Pattern CELL = Pattern.compile("([A-Za-z]{1,2})\\s*-?\\s*0*(\\d{1,2})");
+
+    /** Where a bin sits in the cabinet grid: row letters (upper case) and column number. */
+    public static final class Cell {
+        public final String row;
+        public final int column;
+
+        public Cell(String row, int column) {
+            this.row = row;
+            this.column = column;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            return o instanceof Cell && ((Cell) o).row.equals(row) && ((Cell) o).column == column;
+        }
+
+        @Override
+        public int hashCode() {
+            return row.hashCode() * 31 + column;
+        }
+
+        @Override
+        public String toString() {
+            return row + column;
+        }
+    }
+
+    /**
+     * The grid cell for a bin named like a drawer: one or two letters then a number up to 99 ("A3", "r2", "AB12",
+     * "A-3", "A03"). Anything else, "Unassigned" and names with a suffix such as "A3-top" included, gives null
+     * (those bins are listed under the grid instead, so a cell never stands for two bins).
+     */
+    public static Cell cell(String name) {
+        if (name == null) return null;
+        String n = name.trim();
+        if (n.isEmpty() || same(n, UNASSIGNED)) return null;
+        Matcher m = CELL.matcher(n);
+        if (!m.matches()) return null;
+        return new Cell(m.group(1).toUpperCase(Locale.ROOT), Integer.parseInt(m.group(2)));
+    }
+
+    /** Bins laid out as a cabinet: {@link #rows} top to bottom, columns {@link #firstColumn}…{@link #lastColumn}. */
+    public static final class Grid {
+        /** Row letters, A…Z then AA…; one entry per row of {@link #cells}. */
+        public final List<String> rows = new ArrayList<>();
+        public int firstColumn = 1;
+        public int lastColumn = 0;
+        /** Per row, the bin name in each column from firstColumn; null where no bin has that name (a gap). */
+        public final List<List<String>> cells = new ArrayList<>();
+        /** Bins that don't fit the pattern (or would share a cell), "Unassigned" last. */
+        public final List<String> others = new ArrayList<>();
+        /** True when most named bins fit the pattern, so the grid is worth showing. */
+        public boolean useful;
+
+        public int columns() {
+            return Math.max(0, lastColumn - firstColumn + 1);
+        }
+
+        /** The bin at a row and column, or null. */
+        public String at(String row, int column) {
+            int r = rows.indexOf(row), c = column - firstColumn;
+            if (r < 0 || c < 0 || c >= columns()) return null;
+            return cells.get(r).get(c);
+        }
+    }
+
+    /**
+     * Lays out [names] as a grid. Columns start at 1 (or 0 when a bin uses 0) so missing low drawers show as gaps;
+     * rows are only those that have a bin. A second bin for the same cell ("A3" and "A03") goes to the others.
+     */
+    public static Grid grid(List<String> names) {
+        Grid g = new Grid();
+        Map<String, Map<Integer, String>> placed = new TreeMap<>((a, b) ->
+            a.length() != b.length() ? Integer.compare(a.length(), b.length()) : a.compareTo(b));
+        Set<Cell> taken = new HashSet<>();
+        List<String> others = new ArrayList<>();
+        boolean unassigned = false;
+        int named = 0, fit = 0, min = Integer.MAX_VALUE, max = 0;
+        for (String raw : names) {
+            if (raw == null || raw.trim().isEmpty()) continue;
+            String name = raw.trim();
+            if (same(name, UNASSIGNED)) {
+                unassigned = true;
+                continue;
+            }
+            named++;
+            Cell c = cell(name);
+            if (c == null || !taken.add(c)) {
+                others.add(name);
+                continue;
+            }
+            fit++;
+            placed.computeIfAbsent(c.row, k -> new TreeMap<>()).put(c.column, name);
+            min = Math.min(min, c.column);
+            max = Math.max(max, c.column);
+        }
+        Collections.sort(others, BinStats::compareNames);
+        if (unassigned) others.add(UNASSIGNED);
+        g.others.addAll(others);
+        g.useful = fit > 0 && fit * 2 > named;
+        if (fit == 0) return g;
+        g.firstColumn = Math.min(min, 1);
+        g.lastColumn = max;
+        for (Map.Entry<String, Map<Integer, String>> e : placed.entrySet()) {
+            g.rows.add(e.getKey());
+            List<String> row = new ArrayList<>();
+            for (int col = g.firstColumn; col <= g.lastColumn; col++) row.add(e.getValue().get(col));
+            g.cells.add(row);
+        }
+        return g;
     }
 }
