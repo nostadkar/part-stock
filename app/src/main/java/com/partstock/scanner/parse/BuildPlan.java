@@ -1,6 +1,7 @@
 package com.partstock.scanner.parse;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -42,6 +43,18 @@ public final class BuildPlan {
         }
     }
 
+    /** How well a BOM line is covered for the planned boards (the coverage bar's color). */
+    public enum Coverage {
+        /** Enough in stock. */
+        COVERED,
+        /** Some, but not enough. */
+        PARTIAL,
+        /** None in stock. */
+        NONE,
+        /** Nothing in stock matches the line. */
+        NO_MATCH,
+    }
+
     public static final class LineResult {
         public Req req;
         /** Null when nothing in stock matches. */
@@ -50,6 +63,45 @@ public final class BuildPlan {
         public String matchedOn;
         /** perBoard × boards. */
         public int need;
+        /** Pieces of the matched part needed by all lines using it (equals [need] unless lines share a part). */
+        public int partNeed;
+        /** Stock of the matched part (0 without a match). */
+        public int have;
+        /** have ÷ partNeed, 0…1 (1 when nothing is needed, 0 without a match). */
+        public float coverage;
+        public Coverage status = Coverage.NO_MATCH;
+        /** Boards this line's part supports on its own; -1 without a match, MAX_VALUE when 0 per board. */
+        public int boardsSupported = -1;
+        /** True when this line's part (or missing match) is what stops one more board. */
+        public boolean limiting;
+    }
+
+    /** have ÷ need, 0…1; 1 when nothing is needed. */
+    public static float coverage(int have, int need) {
+        if (need <= 0) return 1f;
+        return (float) Math.min(1.0, Math.max(0, have) / (double) need);
+    }
+
+    /** The color band for [have] pieces against [need]. */
+    public static Coverage status(int have, int need) {
+        if (need <= 0 || have >= need) return Coverage.COVERED;
+        return have > 0 ? Coverage.PARTIAL : Coverage.NONE;
+    }
+
+    /**
+     * Line positions (into [lines]) with the worst first: no match, then the fewest boards supported, then the
+     * lowest coverage; ties keep BOM order.
+     */
+    public static List<Integer> worstFirst(List<LineResult> lines) {
+        List<Integer> order = new ArrayList<>();
+        for (int i = 0; i < lines.size(); i++) order.add(i);
+        Collections.sort(order, (a, b) -> {
+            LineResult x = lines.get(a), y = lines.get(b);
+            int c = Integer.compare(x.boardsSupported, y.boardsSupported);
+            if (c != 0) return c;
+            return Float.compare(x.coverage, y.coverage);
+        });
+        return order;
     }
 
     /** What's short for the planned number of boards, per stock part (or per unmatched line). */
@@ -71,6 +123,19 @@ public final class BuildPlan {
         /** Stock part id → total pieces used for [boards] boards (what "Build N" subtracts). */
         public final Map<Long, Integer> use = new LinkedHashMap<>();
         public int unmatched;
+
+        /** The [n] biggest shortages by missing pieces, biggest first (ties keep their order). */
+        public List<Shortage> topShortages(int n) {
+            List<Shortage> list = new ArrayList<>(shortages);
+            Collections.sort(list, (a, b) -> Integer.compare(b.missing, a.missing));
+            return list.size() > n ? new ArrayList<>(list.subList(0, n)) : list;
+        }
+
+        /** Position in [lines] of the first BOM line behind [s] (-1 if none), to scroll to it. */
+        public int lineOf(Shortage s) {
+            for (int i = 0; i < lines.size(); i++) if (lines.get(i).req == s.req) return i;
+            return -1;
+        }
 
         /** The shortage list as the reorder CSV (Mouser Part Number, Quantity, …; Minimum = needed for N boards). */
         public String reorderCsv() {
@@ -178,6 +243,21 @@ public final class BuildPlan {
         for (Req r : unmatched) {
             int need = r.perBoard * res.boards;
             if (need > 0) res.shortages.add(shortage(r.label, null, r, need, 0, need));
+        }
+
+        // Per-line coverage, against everything the line's part is needed for.
+        for (LineResult lr : res.lines) {
+            if (lr.part == null) {
+                lr.limiting = true;
+                continue;
+            }
+            int per = perBoard.get(lr.part.id);
+            lr.have = Math.max(0, lr.part.onHand);
+            lr.partNeed = per * res.boards;
+            lr.coverage = coverage(lr.have, lr.partNeed);
+            lr.status = status(lr.have, lr.partNeed);
+            lr.boardsSupported = per <= 0 ? Integer.MAX_VALUE : lr.have / per;
+            lr.limiting = per > 0 && lr.boardsSupported == res.buildable;
         }
         return res;
     }

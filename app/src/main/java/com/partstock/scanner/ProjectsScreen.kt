@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.FilterChip
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -251,6 +253,10 @@ private fun ProjectDetail(db: InventoryDb, id: Long, onBack: () -> Unit) {
     var confirmBuild by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var pendingCsv by remember { mutableStateOf("") }
+    var worstFirst by remember { mutableStateOf(false) }
+    val order = remember(plan, worstFirst) { if (worstFirst) BuildPlan.worstFirst(plan.lines) else plan.lines.indices.toList() }
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
 
@@ -283,32 +289,32 @@ private fun ProjectDetail(db: InventoryDb, id: Long, onBack: () -> Unit) {
     ) { padding ->
         LazyColumn(
             Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
+            state = listState,
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            item {
-                val atOne = remember(reqs, stock) { BuildPlan.plan(reqs, stock, 1) }
-                Text(
-                    if (atOne.unmatched > 0) "Can't build yet: ${atOne.unmatched} line${if (atOne.unmatched == 1) " has" else "s have"} no match"
-                    else "You can build ${atOne.buildable} board${if (atOne.buildable == 1) "" else "s"}",
-                    style = MaterialTheme.typography.titleLarge,
-                )
-                if (atOne.limiting.isNotEmpty()) {
-                    Text(
-                        "Limited by: " + atOne.limiting.take(5).joinToString(", ") +
-                            if (atOne.limiting.size > 5) " +${atOne.limiting.size - 5} more" else "",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (atOne.unmatched > 0) {
-                    Text(
-                        "Tap a line marked \"No match\" to pick the part from stock.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
+            // Item 0: the gauge. Buildable doesn't depend on the boards typed; the gauge compares the two.
+            item(key = "gauge") {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    BoardsGauge(plan.buildable, boards, plan.unmatched)
+                    if (plan.limiting.isNotEmpty()) {
+                        Text(
+                            "Limited by: " + plan.limiting.take(5).joinToString(", ") +
+                                if (plan.limiting.size > 5) " +${plan.limiting.size - 5} more" else "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (plan.unmatched > 0) {
+                        Text(
+                            "Tap a line marked \"No match\" to pick the part from stock.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                 }
             }
-            item {
+            // Item 1: boards and Build.
+            item(key = "boards") {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         boardsText,
@@ -323,47 +329,68 @@ private fun ProjectDetail(db: InventoryDb, id: Long, onBack: () -> Unit) {
                     }
                 }
             }
-            item {
-                if (boards > 0 && plan.shortages.isEmpty()) {
-                    Text("Nothing short for $boards board${if (boards == 1) "" else "s"}.", style = MaterialTheme.typography.bodyMedium)
-                } else if (boards > 0) {
-                    Text("Short for $boards board${if (boards == 1) "" else "s"}", style = MaterialTheme.typography.titleMedium)
-                }
-            }
-            items(plan.shortages) { s ->
-                Row {
-                    Column(Modifier.weight(1f)) {
-                        Text(s.label, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold,
-                            style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "need ${s.need}, have ${s.onHand}, short ${s.missing}" + if (s.part == null) " · no match" else "",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            // Item 2: the shortage chart.
+            item(key = "short") {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (boards > 0 && plan.shortages.isEmpty()) {
+                        Text("Nothing short for $boards board${if (boards == 1) "" else "s"}.", style = MaterialTheme.typography.bodyMedium)
+                    } else if (boards > 0) {
+                        Text("Short for $boards board${if (boards == 1) "" else "s"}", style = MaterialTheme.typography.titleMedium)
+                        val top = plan.topShortages(5)
+                        ShortageChart(
+                            top.map { sh ->
+                                ShortBar(
+                                    sh.label, sh.missing,
+                                    "need ${sh.need}, have ${sh.onHand} · order ${sh.orderQty}" +
+                                        if (sh.part == null) " · no match" else "",
+                                )
+                            },
+                            onTap = { i ->
+                                val line = plan.lineOf(top[i])
+                                val pos = order.indexOf(line)
+                                if (pos >= 0) scope.launch { listState.animateScrollToItem(BOM_START + pos) }
+                            },
                         )
-                    }
-                    Text("order ${s.orderQty}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
-                }
-            }
-            if (plan.shortages.isNotEmpty()) {
-                item {
-                    Row {
-                        TextButton(onClick = { Export.share(context, csvName, plan.reorderCsv()) }) {
-                            Icon(Icons.Filled.Share, contentDescription = null)
-                            Text(" Share order CSV")
+                        if (plan.shortages.size > top.size) {
+                            Text(
+                                "+${plan.shortages.size - top.size} more short; see the BOM below.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
-                        TextButton(onClick = {
-                            pendingCsv = plan.reorderCsv()
-                            saveFile.launch(csvName)
-                        }) { Text("Save…") }
+                        Row {
+                            TextButton(onClick = { Export.share(context, csvName, plan.reorderCsv()) }) {
+                                Icon(Icons.Filled.Share, contentDescription = null)
+                                Text(" Share order CSV")
+                            }
+                            TextButton(onClick = {
+                                pendingCsv = plan.reorderCsv()
+                                saveFile.launch(csvName)
+                            }) { Text("Save…") }
+                        }
                     }
                 }
             }
-            item {
-                HorizontalDivider()
-                Text("BOM · ${lines.size} line${if (lines.size == 1) "" else "s"}", style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(top = 8.dp))
+            // Item 3: BOM header with the order toggle; the lines start at BOM_START.
+            item(key = "bom") {
+                Column {
+                    HorizontalDivider()
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.padding(top = 8.dp),
+                    ) {
+                        Text(
+                            "BOM · ${lines.size} line${if (lines.size == 1) "" else "s"}",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.weight(1f),
+                        )
+                        FilterChip(selected = !worstFirst, onClick = { worstFirst = false }, label = { Text("BOM order") })
+                        FilterChip(selected = worstFirst, onClick = { worstFirst = true }, label = { Text("Worst first") })
+                    }
+                }
             }
-            items(lines.indices.toList()) { i ->
+            items(order, key = { "line-" + (lines.getOrNull(it)?.id ?: -it.toLong()) }) { i ->
                 val line = lines[i]
                 val r = plan.lines.getOrNull(i)
                 Column(Modifier.fillMaxWidth().clickable { picking = line }.padding(vertical = 4.dp)) {
@@ -379,11 +406,15 @@ private fun ProjectDetail(db: InventoryDb, id: Long, onBack: () -> Unit) {
                         on == "picked" -> "stock ${part.onHand} (picked: ${partLabel(part)})"
                         else -> "stock ${part.onHand} ($on)"
                     }
+                    val status = if (boards > 0 && r != null && part != null) " · " + coverageWord(r.status, r.have, r.partNeed) else ""
                     Text(
-                        "${line.perBoard} per board" + (if (boards > 0) " · need ${r?.need ?: 0}" else "") + " · " + match,
+                        "${line.perBoard} per board" + (if (boards > 0) " · need ${r?.need ?: 0}" else "") + " · " + match + status,
                         style = MaterialTheme.typography.bodySmall,
                         color = if (part == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    if (r != null && (boards > 0 || part == null)) {
+                        CoverageBar(r.status, r.coverage, r.have, r.partNeed, Modifier.padding(top = 4.dp))
+                    }
                 }
             }
         }
@@ -443,6 +474,9 @@ private fun ProjectDetail(db: InventoryDb, id: Long, onBack: () -> Unit) {
         )
     }
 }
+
+/** Index of the first BOM line in the project page's list (gauge, boards, shortages, BOM header come first). */
+private const val BOM_START = 4
 
 private fun partLabel(s: BuildPlan.Stock): String = s.mpn.ifBlank { s.customerPn.ifBlank { s.distributorPn } }
 

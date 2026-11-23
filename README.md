@@ -141,7 +141,7 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   Transitions follow the system *Remove animations* setting.
 - **Using parts**: − on a part's page uses one, *Use…* asks how many; the count drops and the scan log gets a
   negative "use" entry. **Build kit** (⋮ menu on the Inventory screen): pick a kit, enter the number of boards,
-  check the list (parts that would go below 0 are flagged), then *Use parts* subtracts per board × boards from every
+  check the list (each part has the same coverage bar, and a "Short for N boards" chart shows what runs out), then *Use parts* subtracts per board × boards from every
   part. Kits are learned when you save a bag with its Entrust kit label (kit, per-board Qty and REF DES are stored).
   Counts never go below 0; you're asked to confirm first.
 - **Projects / BOMs** (board icon on the Inventory screen): import a BOM CSV — KiCad's *Export BOM* (Reference, Value,
@@ -149,9 +149,11 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   quantity per board and reference designators (`,` `;` or tab separated; `R1-R4` ranges are expanded; DNP lines are
   left out) — or make a project from a scanned Entrust kit. Lines are matched to stock by MPN, then customer PN, then
   distributor PN; tap a line marked *No match* to pick the part (the search is pre-filled from its value and
-  footprint, e.g. `10k 0603`). The project shows "You can build 4 boards" and the parts that limit it; enter a number
-  of boards to see what's short and how many to order (rounded up like the reorder list), and share or save that as
-  the reorder CSV. *Build N* subtracts per board × N from every matched part (never below 0, confirm first). Deleting
+  footprint, e.g. `10k 0603`). The project opens with a gauge, boards buildable vs. the Boards number ("3 of 10"),
+  and the parts that limit it. Each BOM line has a coverage bar for that many boards (green covered, amber partly,
+  red none, grey no match; *Worst first* puts the limiting lines on top), and a bar chart shows the 5 biggest
+  shortages with how many to order (rounded up like the reorder list); tap one to jump to its line. Share or save the
+  shortages as the reorder CSV. *Build N* subtracts per board × N from every matched part (never below 0, confirm first). Deleting
   a project leaves stock alone.
 - **Undo and history**: after every save (scan, edit, use, move, delete, kit or project build, order import) a bar
   at the bottom offers *Undo* for about 10 seconds; it puts the part(s) back exactly as they were (bins and kit
@@ -242,9 +244,10 @@ app/src/main/java/com/partstock/scanner/
   parse/BinStats.java        Locations screen fill, top categories, sort and search (pure Java, unit tested)
   InventoryDb.kt             SQLite storage + CSV
   OrderImport.kt             Import a Mouser / DigiKey order CSV
-  ProjectsScreen.kt          Projects / BOMs: buildable count, shortages, Build N
+  ProjectsScreen.kt          Projects / BOMs: boards gauge, coverage bars, shortage chart, Build N
+  BuildCharts.kt             Boards gauge, coverage bar and shortage chart shared by projects and kit builds
   parse/BomCsv.java          BOM CSV reading, KiCad and generic (pure Java, unit tested)
-  parse/BuildPlan.java       BOM matching, buildable count and shortage maths (pure Java, unit tested)
+  parse/BuildPlan.java       BOM matching, buildable count, per-line coverage and shortage maths (pure Java, unit tested)
   parse/OrderCsv.java        Order CSV column mapping (pure Java, unit tested)
   parse/InventoryCsv.java    CSV read/write for export and restore (pure Java, unit tested)
   AutoBackup.kt              Writes the inventory CSV to a picked folder after each save

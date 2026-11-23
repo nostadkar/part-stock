@@ -66,6 +66,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.partstock.scanner.parse.BuildPlan
 import com.partstock.scanner.parse.Categories
 import com.partstock.scanner.parse.Links
 import com.partstock.scanner.parse.Locations
@@ -242,28 +243,48 @@ internal fun BuildKitDialog(db: InventoryDb, onDismiss: () -> Unit, onBuilt: (St
                     label = { Text("Boards") }, singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 )
+                if (boards > 0 && short.isNotEmpty()) {
+                    // Same "Short for N boards" chart as a project.
+                    Text("Short for $boards board${if (boards == 1) "" else "s"}", style = MaterialTheme.typography.titleSmall)
+                    ShortageChart(
+                        short.sortedByDescending { it.need - maxOf(0, it.part.quantity) }.take(5).map { line ->
+                            val p = line.part
+                            ShortBar(
+                                p.mpn.ifBlank { p.customerPn.ifBlank { p.distributorPn } }, line.need - maxOf(0, p.quantity),
+                                "need ${line.need}, have ${maxOf(0, p.quantity)}",
+                            )
+                        },
+                    )
+                }
                 plan.forEach { line ->
                     val p = line.part
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    p.mpn.ifBlank { p.customerPn.ifBlank { p.distributorPn } },
+                                    fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Text(
+                                    "${line.perBoard} × $boards = ${line.need}" +
+                                        (if (line.refDes.isNotBlank()) " · ${line.refDes}" else ""),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                )
+                            }
                             Text(
-                                p.mpn.ifBlank { p.customerPn.ifBlank { p.distributorPn } },
-                                fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold,
+                                "${p.quantity} → ${line.after}",
                                 style = MaterialTheme.typography.bodyMedium,
-                            )
-                            Text(
-                                "${line.perBoard} × $boards = ${line.need}" +
-                                    (if (line.refDes.isNotBlank()) " · ${line.refDes}" else ""),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 2,
+                                color = if (line.after < 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.padding(start = 8.dp),
                             )
                         }
-                        Text(
-                            "${p.quantity} → ${line.after}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (line.after < 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.padding(start = 8.dp),
+                        val have = maxOf(0, p.quantity)
+                        CoverageBar(
+                            BuildPlan.status(have, line.need), BuildPlan.coverage(have, line.need), have, line.need,
+                            Modifier.padding(top = 4.dp),
                         )
                     }
                 }
