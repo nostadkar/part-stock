@@ -23,7 +23,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
@@ -31,11 +30,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -61,8 +55,8 @@ class InventoryMenuActions(
 
 /**
  * The Inventory menu as a bottom sheet, grouped into Prices · Import · Export & share · Labels · Reorder · Kits.
- * [reorderCount]: parts below their minimum (null while counting). [zipping]: a photos zip is being built; the
- * sheet shows a progress row and closes itself when it's done.
+ * [reorderCount]: parts below their minimum (null while counting). [zipping]: a photos zip is being built (its
+ * progress card is at the bottom of the screen), so another can't be started.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -74,12 +68,6 @@ fun InventoryMenuSheet(
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    // Close once a zip started from the sheet has finished (the share chooser or "Saved" follows).
-    var sawZip by remember { mutableStateOf(false) }
-    LaunchedEffect(zipping) {
-        if (zipping) sawZip = true
-        else if (sawZip) onDismiss()
-    }
     fun run(action: () -> Unit) {
         onDismiss()
         action()
@@ -100,15 +88,9 @@ fun InventoryMenuSheet(
             )
             ShareSaveRow(
                 Icons.Filled.FolderZip, "Inventory + photos (zip)",
-                // Stays open: the progress row below shows while the zip is built.
-                share = actions.shareZip, save = actions.saveZip, enabled = !zipping,
+                supporting = if (zipping) "Export running…" else null,
+                share = { run(actions.shareZip) }, save = { run(actions.saveZip) }, enabled = !zipping,
             )
-            if (zipping) {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp)) {
-                    Text("Packing inventory and photos…", style = MaterialTheme.typography.bodyMedium)
-                    LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
-                }
-            }
             ShareSaveRow(
                 Icons.Filled.History, "Scan log CSV",
                 share = { run(actions.shareLog) }, save = { run(actions.saveLog) },

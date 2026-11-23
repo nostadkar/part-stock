@@ -79,6 +79,7 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -116,7 +117,11 @@ class MainActivity : ComponentActivity() {
         // A change that couldn't reach the sync file last time (offline, app closed) is retried now.
         if (prefs.syncPending) FileSync.schedule(applicationContext, prefs, db)
         setContent {
-            PartStockTheme { App(prefs, db, secrets) }
+            // Long jobs (price refresh, zip export, update download) live here, outside any screen.
+            val jobs: JobsViewModel = viewModel { JobsViewModel(applicationContext, db) }
+            CompositionLocalProvider(LocalJobs provides jobs) {
+                PartStockTheme { App(prefs, db, secrets) }
+            }
         }
     }
 }
@@ -244,6 +249,10 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
         }
         onDispose { UndoOffer.show = null }
     }
+
+    // Background jobs hand back the share sheet to open (needs the activity's context).
+    val jobs = LocalJobs.current
+    LaunchedEffect(jobs) { jobs.toLaunch.collect { context.startActivity(it) } }
 
     // Look for a newer build on GitHub at launch (quietly; offline is fine).
     var update by remember { mutableStateOf<Updater.Release?>(null) }
@@ -463,10 +472,20 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
     }
     }
     }
-    SnackbarHost(
-        snackbar,
+    // Progress cards for long jobs sit just above the undo snackbar.
+    Column(
         Modifier.align(Alignment.BottomCenter).navigationBarsPadding().imePadding().padding(bottom = 8.dp),
-    )
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        JobCards(
+            jobs,
+            onShowChanged = { ids ->
+                vm.changedOnly.value = ids
+                screen = Screen.Inventory()
+            },
+        )
+        SnackbarHost(snackbar)
+    }
     }
     if (showBar && !rail) {
         NavigationBar {

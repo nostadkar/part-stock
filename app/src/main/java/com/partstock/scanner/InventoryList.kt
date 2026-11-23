@@ -102,6 +102,8 @@ class InventoryListActions(
     val toggleOverview: () -> Unit = {},
     /** Overview donut by value (true) or pieces. */
     val setOverviewByValue: (Boolean) -> Unit = {},
+    /** Drops the "Price changed" filter (set from a price refresh's result). */
+    val clearChanged: () -> Unit = {},
     /** Shows only parts without a price (the Value tile's "unpriced" count), or all again. */
     val toggleUnpriced: () -> Unit = {},
     /** Searches for a spec chip's text (tap 0603 → search "0603"). */
@@ -172,6 +174,7 @@ fun InventoryList(
                     view.bucket?.let { add(FilterTag(it) { actions.setBucket(null) }) }
                     if (view.lowOnly) add(FilterTag("Low stock", actions.toggleLow))
                     if (view.unpricedOnly) add(FilterTag("Unpriced", actions.toggleUnpriced))
+                    if (view.changedOnly) add(FilterTag("Price changed", actions.clearChanged))
                     view.bin?.let { add(FilterTag("Bin $it", actions.clearBin)) }
                     if (view.query.isNotBlank()) add(FilterTag("\u201C${view.query}\u201D", actions.clearSearch))
                 }
@@ -470,7 +473,7 @@ private fun CategoryChips(view: InventoryView, bucket: String?, lowOnly: Boolean
     ) {
         item(key = "all") {
             FilterChip(
-                selected = bucket == null && !lowOnly && !view.unpricedOnly,
+                selected = bucket == null && !lowOnly && !view.unpricedOnly && !view.changedOnly,
                 onClick = actions.clearFilters,
                 label = { Text("All · ${view.parts.size}") },
             )

@@ -44,6 +44,8 @@ data class InventoryView(
     val unpriced: Int = 0,
     /** Showing only parts without a unit cost (the Value tile's "unpriced" filter). */
     val unpricedOnly: Boolean = false,
+    /** Showing only the parts whose price the last refresh changed ("Show parts with a price change"). */
+    val changedOnly: Boolean = false,
     /** Up to [InventoryViewModel.TOP_VALUE] parts with the highest stock value (unit cost × pieces), highest first. */
     val mostValuable: List<PartRow> = emptyList(),
     /** The list order; only [PartSort.Sort.CATEGORY] groups by category. */
@@ -61,7 +63,8 @@ data class InventoryView(
     val lowestFirst: Boolean get() = sort == PartSort.Sort.LOWEST_STOCK
 
     /** Any filter on (category, low stock, unpriced, bin or search): shows the active-filter bar. */
-    val filtered: Boolean get() = bucket != null || lowOnly || unpricedOnly || bin != null || query.isNotBlank()
+    val filtered: Boolean get() =
+        bucket != null || lowOnly || unpricedOnly || changedOnly || bin != null || query.isNotBlank()
 
     val parts: List<PartRow> get() = data.parts
     val photos: Map<Long, List<String>> get() = data.photos
@@ -112,13 +115,15 @@ class InventoryViewModel(val db: InventoryDb) : ViewModel() {
     val lowOnly = MutableStateFlow(false)
     val unpricedOnly = MutableStateFlow(false)
     val bin = MutableStateFlow<String?>(null)
+    /** Only these part ids (the parts a price refresh changed); null = no such filter. */
+    val changedOnly = MutableStateFlow<Set<Long>?>(null)
     /** List order (the screen restores it from Prefs). */
     val sort = MutableStateFlow(PartSort.Sort.CATEGORY)
 
     private val filters = combine(
         query.debounce { if (it.isBlank()) 0L else SEARCH_DEBOUNCE_MS },
-        bucket, combine(lowOnly, unpricedOnly) { low, unpriced -> low to unpriced }, bin, sort,
-    ) { q, b, (low, unpriced), bin, order -> Filters(q, b, low, bin, order, unpriced) }
+        bucket, combine(lowOnly, unpricedOnly, changedOnly) { low, unpriced, ids -> Triple(low, unpriced, ids) }, bin, sort,
+    ) { q, b, (low, unpriced, ids), bin, order -> Filters(q, b, low, bin, order, unpriced, ids) }
 
     /** Locations screen sort and search. */
     val binSort = MutableStateFlow(BinStats.Sort.NAME)
@@ -138,6 +143,7 @@ class InventoryViewModel(val db: InventoryDb) : ViewModel() {
         bucket.value = null
         lowOnly.value = false
         unpricedOnly.value = false
+        changedOnly.value = null
     }
 
     private data class Filters(
@@ -147,12 +153,14 @@ class InventoryViewModel(val db: InventoryDb) : ViewModel() {
         val bin: String?,
         val sort: PartSort.Sort,
         val unpricedOnly: Boolean = false,
+        val ids: Set<Long>? = null,
     )
 
     private fun build(d: InventoryData, f: Filters): InventoryView {
         val parts = d.parts
         val filtered = parts.filter { p ->
             (f.bucket == null || p.category == f.bucket) && (!f.lowOnly || p.isLow()) && (!f.unpricedOnly || p.unitCost == null) &&
+                (f.ids == null || p.id in f.ids) &&
                 (f.query.isBlank() || p.matches(f.query)) &&
                 (f.bin == null || Locations.keyOf(p.bins(), f.bin) != null)
         }
@@ -179,6 +187,7 @@ class InventoryViewModel(val db: InventoryDb) : ViewModel() {
             value = parts.sumOf { (it.unitCost ?: 0.0) * it.quantity },
             unpriced = parts.count { it.unitCost == null },
             unpricedOnly = f.unpricedOnly,
+            changedOnly = f.ids != null,
             mostValuable = parts.filter { (it.unitCost ?: 0.0) * it.quantity > 0 }
                 .sortedByDescending { (it.unitCost ?: 0.0) * it.quantity }.take(TOP_VALUE),
             sort = f.sort,

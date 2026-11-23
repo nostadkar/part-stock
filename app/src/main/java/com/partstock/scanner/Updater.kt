@@ -5,25 +5,21 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
+import androidx.compose.ui.unit.dp
 import androidx.core.content.pm.PackageInfoCompat
+import com.partstock.scanner.parse.JobText
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
@@ -42,7 +38,8 @@ object Updater {
     private const val APK_NAME = "part-stock.apk"
     private const val AUTO_CHECK_EVERY_MS = 6L * 60 * 60 * 1000
 
-    data class Release(val build: Int, val name: String, val apkUrl: String, val sizeBytes: Long)
+    /** [notes]: the release text (the commit message for builds from main); blank when there is none. */
+    data class Release(val build: Int, val name: String, val apkUrl: String, val sizeBytes: Long, val notes: String = "")
 
     fun currentBuild(context: Context): Long =
         PackageInfoCompat.getLongVersionCode(context.packageManager.getPackageInfo(context.packageName, 0))
@@ -66,7 +63,9 @@ object Updater {
                 val a = assets.getJSONObject(i)
                 val url = a.optString("browser_download_url")
                 if (a.optString("name") == APK_NAME && url.startsWith(DOWNLOAD_PREFIX)) {
-                    return@withContext Release(build, json.optString("name", "build $build"), url, a.optLong("size", 0L))
+                    // optString gives "null" for a JSON null, so check for it first.
+                    val notes = if (json.isNull("body")) "" else json.optString("body")
+                    return@withContext Release(build, json.optString("name", "build $build"), url, a.optLong("size", 0L), notes)
                 }
             }
             null
@@ -86,8 +85,11 @@ object Updater {
         return r
     }
 
-    /** Downloads the APK into the app's cache and checks it really is a newer build of this app. */
-    suspend fun download(context: Context, r: Release, onProgress: (Float) -> Unit): File = withContext(Dispatchers.IO) {
+    /**
+     * Downloads the APK into the app's cache and checks it really is a newer build of this app. [onProgress] gets
+     * (bytes so far, total bytes or 0 when unknown); cancelling the coroutine stops the download and deletes the file.
+     */
+    suspend fun download(context: Context, r: Release, onProgress: (Long, Long) -> Unit): File = withContext(Dispatchers.IO) {
         val dir = File(context.cacheDir, "updates").apply { mkdirs() }
         dir.listFiles()?.forEach { it.delete() }
         val file = File(dir, APK_NAME)
@@ -98,16 +100,22 @@ object Updater {
             conn.instanceFollowRedirects = true
             if (conn.responseCode != 200) error("Download failed (${conn.responseCode})")
             val total = conn.contentLengthLong.takeIf { it > 0 } ?: r.sizeBytes
+            onProgress(0L, total)
             conn.inputStream.use { input ->
                 file.outputStream().use { out ->
                     val buf = ByteArray(64 * 1024)
                     var done = 0L
                     while (true) {
+                        if (!isActive) {
+                            out.close()
+                            file.delete()
+                            throw kotlinx.coroutines.CancellationException("Download stopped")
+                        }
                         val n = input.read(buf)
                         if (n < 0) break
                         out.write(buf, 0, n)
                         done += n
-                        if (total > 0) onProgress((done.toFloat() / total).coerceIn(0f, 1f))
+                        onProgress(done, total)
                     }
                 }
             }
@@ -149,68 +157,46 @@ object Updater {
     }
 }
 
-/** "Update available" dialog: downloads the APK with progress, then hands it to the installer. */
+/**
+ * "Update available" dialog with the download size and the release notes' first lines. Update starts the download
+ * as a background job ([JobsViewModel]): its progress card shows MB/s, then Android's installer opens.
+ */
 @Composable
 fun UpdateDialog(release: Updater.Release, onLater: () -> Unit, onClose: () -> Unit) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var progress by remember { mutableFloatStateOf(0f) }
-    var downloading by remember { mutableStateOf(false) }
-    var apk by remember { mutableStateOf<File?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
-
-    fun installOrAsk(file: File) {
-        if (Updater.canInstall(context)) {
-            Updater.install(context, file)
-            onClose()
-        } else {
-            error = "Allow Part Stock to install apps, then come back and tap Install."
-            Updater.openInstallPermission(context)
-        }
-    }
+    val jobs = LocalJobs.current
+    val notes = remember(release) { JobText.firstLines(release.notes, 3) }
+    val size = JobText.bytes(release.sizeBytes)
+    val downloading = jobs.isRunning(JobKind.UPDATE)
 
     AlertDialog(
-        onDismissRequest = { if (!downloading) onLater() },
+        onDismissRequest = onLater,
         title = { Text("Update available") },
         text = {
-            Column {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     "${release.name} is ready (you have ${Updater.currentName(context)}). " +
-                        "It installs over this version and keeps your inventory."
+                        "It installs over this version and keeps your inventory." +
+                        if (size.isNotEmpty()) " Download: $size." else ""
                 )
-                if (downloading) {
-                    LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+                if (notes.isNotEmpty()) {
+                    Text("What's new", style = MaterialTheme.typography.titleSmall)
+                    notes.forEach { Text("\u2022 $it", style = MaterialTheme.typography.bodySmall) }
                 }
-                error?.let { Text(it) }
+                if (downloading) Text("Downloading; see the card at the bottom.", style = MaterialTheme.typography.bodySmall)
             }
         },
         confirmButton = {
             TextButton(
                 enabled = !downloading,
                 onClick = {
-                    val ready = apk
-                    if (ready != null) {
-                        installOrAsk(ready)
-                        return@TextButton
-                    }
-                    downloading = true
-                    error = null
-                    scope.launch {
-                        try {
-                            val file = Updater.download(context, release) { progress = it }
-                            apk = file
-                            installOrAsk(file)
-                        } catch (e: Exception) {
-                            error = "Update failed: ${e.message}"
-                        } finally {
-                            downloading = false
-                        }
-                    }
+                    jobs.downloadUpdate(release)
+                    onClose()
                 },
-            ) { Text(if (apk != null) "Install" else "Update") }
+            ) { Text("Update") }
         },
         dismissButton = {
-            TextButton(enabled = !downloading, onClick = onLater) { Text("Later") }
+            TextButton(onClick = onLater) { Text("Later") }
         },
     )
 }

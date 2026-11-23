@@ -53,6 +53,12 @@ installs over the previous one and your inventory is kept. Don't reuse that key 
 and offers "Update available". Tap Update: it downloads `part-stock.apk` from this repo's releases, checks it is a
 newer Part Stock build, and opens Android's installer (the first time, Android asks you to allow installs from
 Part Stock). Settings → Check for updates does the same on demand. The build number is the workflow run number.
+The dialog shows the download size and the first lines of the release notes (the commit message); the download then
+runs on a progress card with MB/s, so you can keep using the app.
+
+**Long jobs** (Refresh prices, the inventory + photos zip, the update download) run on a small **progress card** above
+the bottom bar instead of a dialog: title, progress bar, "N of M" and Cancel. They keep going while you switch screens.
+Tap the price refresh card for details.
 
 To build locally instead: open the folder in Android Studio and press Run. Min Android 8.0.
 
@@ -91,9 +97,11 @@ slightly brighter outlines); it applies at once and the status- and navigation-b
   Mouser P/N on Mouser labels, otherwise the MPN. It runs once per scan; the button is there for a retry after you edit
   the part number. Turn it off in Settings → *Look up on Mouser after each scan*.
 - **Refresh prices** (⋮ menu on the Inventory screen) looks up every part with a Mouser part number and
-  updates its unit cost, description, link and category, then shows e.g. "Updated 38, not found 2". It sends one request
-  every 2.2 s to stay under Mouser's limit of about 30 a minute (so 100 parts take about 4 minutes; keep the screen
-  open) and stops cleanly on a rate-limit or key error, keeping what was already updated. A category you picked by hand
+  updates its unit cost, description, link and category. It sends one request every 2.2 s to stay under Mouser's limit
+  of about 30 a minute (so 100 parts take about 4 minutes, on a progress card; you can keep browsing) and stops cleanly
+  on a rate-limit or key error or when you tap Cancel, keeping what was already updated. When it's done the card says
+  what changed: tap View for the biggest price movers (▲ red dearer / ▼ green cheaper, % and old → new unit cost), the
+  unchanged / not found / failed counts, and *Show parts with a price change*, which filters the inventory to them. A category you picked by hand
   (in the review screen or on the part page) is remembered and never overwritten by a lookup or refresh.
   The part page shows where and when the price came from ("Price from Mouser, Oct 18").
 - **Settings → DigiKey API** (Client ID and Client Secret of an app you create at developer.digikey.com with the
@@ -267,6 +275,7 @@ app/src/main/java/com/partstock/scanner/
   InventoryViewModel.kt      Loads parts/photos/bins on IO, reloads on DB changes, debounced search + filters
   PartDialogs.kt             Move between bins, history
   InventoryTools.kt          Refresh prices, build kit dialogs
+  Jobs.kt                    Background jobs (price refresh, zip, update download) and their progress cards
   LocationsScreen.kt         Bins with counts, fill bars, thumbnails, search/sort, rename everywhere
   Labels.kt                  QR label PDFs (PdfDocument + ZXing encoder), share / print
   UndoOffer.kt               Undo snackbar after saves

@@ -80,109 +80,47 @@ import java.time.LocalDate
 
 
 /**
- * Looks up every part with a Mouser part number, one request every couple of seconds (Mouser allows about 30 a
- * minute), and updates price, description, link and category (unless picked by hand). Stops on a rate-limit or key
- * error; parts done so far stay updated.
+ * Asks before refreshing every part with a Mouser part number. The refresh itself runs in [JobsViewModel] with a
+ * progress card, so you can keep browsing; while one runs, this shows it instead of offering a new one.
  */
 @Composable
-internal fun RefreshPricesDialog(db: InventoryDb, secrets: SecretStore, parts: List<PartRow>, onClose: (Boolean) -> Unit) {
-    val scope = rememberCoroutineScope()
+internal fun RefreshPricesDialog(secrets: SecretStore, parts: List<PartRow>, onClose: () -> Unit) {
+    val jobs = LocalJobs.current
     val key = remember { secrets.getMouserKey() }
     val targets = remember { parts.filter { PriceRefresh.hasMouserPn(it.distributor, it.distributorPn, it.productUrl) } }
-    var job by remember { mutableStateOf<Job?>(null) }
-    var done by remember { mutableIntStateOf(0) }
-    var updated by remember { mutableIntStateOf(0) }
-    var notFound by remember { mutableIntStateOf(0) }
-    var failed by remember { mutableIntStateOf(0) }
-    var result by remember { mutableStateOf<String?>(null) }
-    val running = job != null && result == null
-
-    fun start(k: String) {
-        job = scope.launch {
-            var stopped: String? = null
-            for ((i, p) in targets.withIndex()) {
-                if (i > 0) delay(PriceRefresh.MOUSER_PACE_MS)
-                try {
-                    val r = MouserApi.lookup(k, p.distributorPn.trim(), maxOf(1, p.quantity))
-                    if (r == null) {
-                        notFound++
-                    } else {
-                        val cat = Categories.classify(r.category, r.description, p.description)
-                        withContext(Dispatchers.IO) {
-                            db.applyLookup(
-                                p.id,
-                                LookupUpdate(r.unitPrice, r.description, cat, r.url, "Mouser", r.datasheetUrl, r.specs),
-                            )
-                        }
-                        updated++
-                    }
-                } catch (e: MouserException) {
-                    if (e.rateLimited || e.badKey) {
-                        stopped = e.message ?: "Mouser error"
-                        break
-                    }
-                    failed++
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    failed++
-                }
-                done = i + 1
-            }
-            if (updated > 0) withContext(Dispatchers.IO) { db.notifyChanged() }
-            result = PriceRefresh.summary(updated, notFound, failed, stopped, targets.size - done)
-        }
-    }
-
-    fun stop() {
-        job?.cancel()
-        if (updated > 0) db.notifyChanged()
-        result = PriceRefresh.summary(updated, notFound, failed, "you stopped it", targets.size - done)
-    }
+    val running = jobs.isRunning(JobKind.PRICES)
 
     AlertDialog(
-        onDismissRequest = { if (!running) onClose(updated > 0) },
+        onDismissRequest = onClose,
         title = { Text("Refresh prices") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                when {
-                    key == null -> Text("Add a Mouser API key in Settings first.")
-                    targets.isEmpty() -> Text("No parts have a Mouser part number.")
-                    result != null -> Text(result.orEmpty())
-                    running -> {
-                        Text("Checking ${done + 1} of ${targets.size}…")
-                        LinearProgressIndicator(
-                            progress = { done.toFloat() / targets.size },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Text(
-                            "Updated $updated so far. One request every ${PriceRefresh.MOUSER_PACE_MS / 1000.0} s " +
-                                "to stay under Mouser's limit.",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                    else -> {
-                        val secs = targets.size * PriceRefresh.MOUSER_PACE_MS / 1000
-                        Text(
-                            "Looks up ${targets.size} part${if (targets.size == 1) "" else "s"} with a Mouser part number " +
-                                "and updates unit cost, description and category (categories you picked stay). " +
-                                "Takes about ${if (secs < 90) "$secs seconds" else "${(secs + 59) / 60} minutes"}; " +
-                                "keep this screen open.",
-                        )
-                    }
+            when {
+                running -> Text("A price refresh is already running; its card at the bottom shows how far it is.")
+                key == null -> Text("Add a Mouser API key in Settings first.")
+                targets.isEmpty() -> Text("No parts have a Mouser part number.")
+                else -> {
+                    val secs = targets.size * PriceRefresh.MOUSER_PACE_MS / 1000
+                    Text(
+                        "Looks up ${targets.size} part${if (targets.size == 1) "" else "s"} with a Mouser part number " +
+                            "and updates unit cost, description and category (categories you picked stay). " +
+                            "Takes about ${if (secs < 90) "$secs seconds" else "${(secs + 59) / 60} minutes"}; " +
+                            "it runs in the background, and you'll see what changed when it's done.",
+                    )
                 }
             }
         },
         confirmButton = {
-            when {
-                key != null && targets.isNotEmpty() && job == null ->
-                    TextButton(onClick = { start(key) }) { Text("Start") }
-                running -> TextButton(onClick = ::stop) { Text("Stop") }
-                else -> TextButton(onClick = { onClose(updated > 0) }) { Text("Close") }
+            if (!running && key != null && targets.isNotEmpty()) {
+                TextButton(onClick = {
+                    jobs.startPriceRefresh(key, targets)
+                    onClose()
+                }) { Text("Start") }
+            } else {
+                TextButton(onClick = onClose) { Text("Close") }
             }
         },
         dismissButton = {
-            if (job == null) TextButton(onClick = { onClose(false) }) { Text("Cancel") }
+            if (!running && key != null && targets.isNotEmpty()) TextButton(onClick = onClose) { Text("Cancel") }
         },
     )
 }

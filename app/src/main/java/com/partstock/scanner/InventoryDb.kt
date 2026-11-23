@@ -1136,9 +1136,10 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
     /**
      * Applies a distributor lookup to a saved part: price (with source and date), description, link, and the
      * category unless the user picked it. Doesn't fire [onChanged]; the caller does once after a batch.
+     * Returns the part as it was before (null when it's gone), so a price refresh can say what changed.
      */
-    fun applyLookup(id: Long, u: LookupUpdate) {
-        val old = byId(id) ?: return
+    fun applyLookup(id: Long, u: LookupUpdate): PartRow? {
+        val old = byId(id) ?: return null
         val db = writableDatabase
         db.beginTransaction()
         try {
@@ -1149,6 +1150,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         } finally {
             db.endTransaction()
         }
+        return old
     }
 
     private fun applyLookupTx(db: SQLiteDatabase, old: PartRow, u: LookupUpdate) {

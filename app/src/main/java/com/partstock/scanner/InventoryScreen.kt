@@ -200,20 +200,12 @@ fun InventoryScreen(
         }
     }
 
-    var zipping by remember { mutableStateOf(false) }
+    // Zip export runs as a background job with a progress card (JobsViewModel).
+    val jobs = LocalJobs.current
+    val jobsRunning by jobs.running.collectAsStateWithLifecycle()
+    val zipping = JobKind.ZIP in jobsRunning
     val saveZip = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
-        if (uri != null) {
-            zipping = true
-            scope.launch {
-                try {
-                    val n = withContext(Dispatchers.IO) { Export.saveZip(context, uri, db) }
-                    toast("Saved with $n photo${if (n == 1) "" else "s"}")
-                } catch (e: Exception) {
-                    toast("Save failed: ${e.message}")
-                }
-                zipping = false
-            }
-        }
+        if (uri != null) jobs.saveZip(uri)
     }
 
     val saveFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
@@ -247,18 +239,7 @@ fun InventoryScreen(
                         saveFile.launch(Export.fileName("inventory"))
                     }
                 },
-                shareZip = {
-                    zipping = true
-                    scope.launch {
-                        try {
-                            val chooser = withContext(Dispatchers.IO) { Export.shareZip(context, db) }
-                            context.startActivity(chooser)
-                        } catch (e: Exception) {
-                            toast("Export failed: ${e.message}")
-                        }
-                        zipping = false
-                    }
-                },
+                shareZip = { jobs.shareZip() },
                 saveZip = { saveZip.launch(Export.zipName()) },
                 shareLog = { withCsv(db::logCsv) { Export.share(context, Export.fileName("scan-log"), it) } },
                 saveLog = {
@@ -333,7 +314,9 @@ fun InventoryScreen(
         },
         clearBin = onClearBin,
         clearSearch = { setQuery("") },
+        clearChanged = { vm.changedOnly.value = null },
         clearFilters = {
+            vm.changedOnly.value = null
             vm.bucket.value = null
             vm.lowOnly.value = false
             vm.unpricedOnly.value = false
@@ -535,7 +518,6 @@ fun InventoryScreen(
 
     if (refreshing) {
         RefreshPricesDialog(
-            db = db,
             secrets = secrets,
             parts = data.parts,
             onClose = { refreshing = false },

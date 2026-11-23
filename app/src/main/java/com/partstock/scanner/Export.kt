@@ -43,12 +43,23 @@ object Export {
     /**
      * Inventory CSV plus every part photo, as a zip: inventory.csv, photos/<part number>-<n>.jpg, and photos.csv
      * saying which photo belongs to which part. Returns the number of photos written. Call off the main thread.
+     * [onProgress] gets (photos done, photos in all); [cancelled] is checked between photos and stops the export
+     * with a CancellationException.
      */
-    fun writeZip(context: Context, db: InventoryDb, out: OutputStream): Int {
+    fun writeZip(
+        context: Context,
+        db: InventoryDb,
+        out: OutputStream,
+        onProgress: (Int, Int) -> Unit = { _, _ -> },
+        cancelled: () -> Boolean = { false },
+    ): Int {
         val parts = db.all().associateBy { it.id }
         val photos = db.allPhotos()
+        val total = photos.entries.sumOf { (id, files) -> if (parts.containsKey(id)) files.size else 0 }
         val index = mutableListOf<List<String>>()
         var n = 0
+        var seen = 0
+        onProgress(0, total)
         ZipOutputStream(out.buffered()).use { zip ->
             zip.putNextEntry(ZipEntry("inventory.csv"))
             zip.write(db.inventoryCsv().toByteArray(Charsets.UTF_8))
@@ -59,6 +70,8 @@ object Export {
                 val key = p.mpn.ifBlank { p.customerPn.ifBlank { p.distributorPn } }.ifBlank { "part-$partId" }
                 val base = key.replace(Regex("[^A-Za-z0-9._-]+"), "_").take(60)
                 files.forEachIndexed { i, name ->
+                    if (cancelled()) throw kotlinx.coroutines.CancellationException("Export stopped")
+                    onProgress(seen++, total)
                     val f = PartPhotos.file(context, name)
                     if (!f.isFile) return@forEachIndexed
                     var entry = "photos/$base-${i + 1}.jpg"
@@ -78,15 +91,26 @@ object Export {
             )
             zip.closeEntry()
         }
+        onProgress(total, total)
         return n
     }
 
     /** Builds the inventory + photos zip (call off the main thread) and returns the share sheet intent for it. */
-    fun shareZip(context: Context, db: InventoryDb): Intent {
+    fun shareZip(
+        context: Context,
+        db: InventoryDb,
+        onProgress: (Int, Int) -> Unit = { _, _ -> },
+        cancelled: () -> Boolean = { false },
+    ): Intent {
         val dir = File(context.cacheDir, "exports").apply { mkdirs() }
         dir.listFiles()?.filter { it.name.endsWith(".zip") }?.forEach { it.delete() } // only the newest zip is kept
         val file = File(dir, zipName())
-        file.outputStream().use { writeZip(context, db, it) }
+        try {
+            file.outputStream().use { writeZip(context, db, it, onProgress, cancelled) }
+        } catch (e: Throwable) {
+            file.delete() // no half-written zip left behind
+            throw e
+        }
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
         val send = Intent(Intent.ACTION_SEND)
             .setType("application/zip")
@@ -96,9 +120,27 @@ object Export {
         return Intent.createChooser(send, "Export ${file.name}")
     }
 
-    /** Writes the inventory + photos zip to a file the user picked. Call off the main thread. */
-    fun saveZip(context: Context, uri: Uri, db: InventoryDb): Int =
-        context.contentResolver.openOutputStream(uri, "wt")?.use { writeZip(context, db, it) } ?: error("Couldn't open file")
+    /**
+     * Writes the inventory + photos zip to a file the user picked. Call off the main thread. If it fails or is
+     * stopped, the half-written file is deleted where the picker allows it.
+     */
+    fun saveZip(
+        context: Context,
+        uri: Uri,
+        db: InventoryDb,
+        onProgress: (Int, Int) -> Unit = { _, _ -> },
+        cancelled: () -> Boolean = { false },
+    ): Int = try {
+        context.contentResolver.openOutputStream(uri, "wt")?.use { writeZip(context, db, it, onProgress, cancelled) }
+            ?: error("Couldn't open file")
+    } catch (e: Throwable) {
+        try {
+            android.provider.DocumentsContract.deleteDocument(context.contentResolver, uri)
+        } catch (ignored: Exception) {
+            // not deletable through this provider; the file stays (incomplete)
+        }
+        throw e
+    }
 
     /** Writes the CSV to a location the user picked with the system file picker. */
     fun writeTo(context: Context, uri: Uri, csv: String) {

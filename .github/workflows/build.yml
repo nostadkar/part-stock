@@ -63,5 +63,7 @@ jobs:
         with:
           tag_name: build-${{ github.run_number }}
           name: Part Stock build ${{ github.run_number }}
+          # The commit message becomes the release notes the in-app update dialog shows.
+          body: ${{ github.event.head_commit.message }}
           files: part-stock.apk
           make_latest: true
