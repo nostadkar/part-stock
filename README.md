@@ -199,7 +199,10 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   your label printer's app or *Print* with Android printing. Each label has a QR code with a short app-only text
   (`PS:P:<part id>` or `PS:L:<bin>`) plus part number, description and bin. Point the scan screen at a label and tap the
   shutter: a part label opens that part (to use or correct stock), a bin label sets the bin for the next saves. Other QR
-  codes are ignored. The PDF is drawn on the phone; nothing is sent anywhere.
+  codes are ignored. The PDF is drawn on the phone; nothing is sent anywhere. The dialog shows a live preview of the
+  first label at the chosen size (drawn by the same code as the PDF) and warns when text is cut ("Description is cut
+  off at 2 lines"). For the Letter sheet, a 3 × 10 grid shows which slots get filled; tap the first free slot (or use
+  − / +) to reuse a partly used sheet.
 - **Photos**: the label photo from a scan is kept as the part's thumbnail (shown on its inventory row) when the part has
   no photo yet; later scans of the same part don't add more. On a part's page, *Take photo* or *Add from gallery*
   adds more (of the bag or the part itself); tap a thumbnail to view it full screen (pinch to zoom) or delete it. Photos
@@ -285,6 +288,7 @@ app/src/main/java/com/partstock/scanner/
   UndoOffer.kt               Undo snackbar after saves
   parse/ChangeSummary.java   "What changed" line for the part history (pure Java, unit tested)
   parse/LabelCodes.java      QR label payloads PS:P:<id> / PS:L:<bin> (pure Java, unit tested)
+  parse/LabelSheet.java      Avery 5160 slot → page/position math with a start slot (pure Java, unit tested)
   parse/Locations.java       Stock per bin: add, set, use, move, rename, CSV column (pure Java, unit tested)
   parse/BinStats.java        Locations screen fill, top categories, sort and search (pure Java, unit tested)
   InventoryDb.kt             SQLite storage + CSV

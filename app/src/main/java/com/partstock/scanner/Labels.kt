@@ -2,6 +2,7 @@ package com.partstock.scanner
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -16,9 +17,29 @@ import android.print.PrintDocumentAdapter
 import android.print.PrintDocumentInfo
 import android.print.PrintManager
 import android.widget.Toast
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
@@ -26,23 +47,45 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import com.google.zxing.qrcode.encoder.Encoder
 import com.partstock.scanner.parse.LabelCodes
+import com.partstock.scanner.parse.LabelSheet
 import com.partstock.scanner.parse.Locations
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 
 /** One label: the QR text ([LabelCodes]) plus a bold title and up to two short lines. */
 data class LabelItem(val code: String, val title: String, val lines: List<String>)
+
+/** What didn't fit on a label: a cut part number, a description cut after [descriptionLines] lines, dropped lines. */
+data class LabelFit(val titleCut: Boolean, val descriptionLines: Int, val descriptionCut: Boolean, val linesDropped: Int) {
+    /** "Description is cut off at 2 lines", or null when everything fits. */
+    fun warning(): String? = when {
+        titleCut -> "Part number is cut off"
+        descriptionCut -> "Description is cut off at $descriptionLines line${if (descriptionLines == 1) "" else "s"}"
+        linesDropped > 0 -> "Bin / manufacturer line doesn't fit"
+        else -> null
+    }
+}
 
 /** Label stock the PDF is laid out for. Sizes in PDF points (1/72 in). */
 enum class LabelSize(val title: String, val labelW: Float, val labelH: Float, val sheet: Boolean, val milsW: Int, val milsH: Int) {
@@ -74,27 +117,23 @@ fun binLabel(name: String, parts: Int): LabelItem =
  * label per page, which is what label printers expect; the Letter sheet packs 30 per page.
  */
 object LabelPdf {
-    // Avery 5160 / 8160: 3 × 10 labels of 2.625 × 1 in on Letter.
-    private const val SHEET_W = 612
-    private const val SHEET_H = 792
-    private const val SHEET_LEFT = 13.5f
-    private const val SHEET_TOP = 36f
-    private const val SHEET_PITCH_X = 198f
-    private const val SHEET_PITCH_Y = 72f
-    private const val SHEET_COLS = 3
-    private const val SHEET_ROWS = 10
-
-    fun write(file: File, items: List<LabelItem>, size: LabelSize) {
+    /**
+     * Writes the labels. On the Letter sheet (Avery 5160 / 8160, layout in [LabelSheet]) the first label goes in slot
+     * [start] (0 = top left), so a partly used sheet can be printed on again; label printers ignore it.
+     */
+    fun write(file: File, items: List<LabelItem>, size: LabelSize, start: Int = 0) {
         val doc = PdfDocument()
         try {
             if (size.sheet) {
-                val perPage = SHEET_COLS * SHEET_ROWS
-                items.chunked(perPage).forEachIndexed { pageNo, chunk ->
-                    val page = doc.startPage(PdfDocument.PageInfo.Builder(SHEET_W, SHEET_H, pageNo + 1).create())
-                    chunk.forEachIndexed { i, item ->
-                        val x = SHEET_LEFT + (i % SHEET_COLS) * SHEET_PITCH_X
-                        val y = SHEET_TOP + (i / SHEET_COLS) * SHEET_PITCH_Y
-                        draw(page.canvas, item, x, y, size.labelW, size.labelH)
+                val pages = LabelSheet.pages(items.size, start)
+                var next = 0
+                for (pageNo in 0 until pages) {
+                    val page = doc.startPage(PdfDocument.PageInfo.Builder(LabelSheet.PAGE_W, LabelSheet.PAGE_H, pageNo + 1).create())
+                    while (next < items.size) {
+                        val slot = LabelSheet.slot(next, start)
+                        if (slot.page != pageNo) break
+                        draw(page.canvas, items[next], slot.x, slot.y, size.labelW, size.labelH)
+                        next++
                     }
                     doc.finishPage(page)
                 }
@@ -114,14 +153,30 @@ object LabelPdf {
         }
     }
 
-    private fun draw(canvas: Canvas, item: LabelItem, x: Float, y: Float, w: Float, h: Float) {
+    /**
+     * Draws a label at the chosen size into a bitmap ([scale] pixels per PDF point), with the same drawing code as the
+     * PDF, and says what didn't fit.
+     */
+    fun preview(item: LabelItem, size: LabelSize, scale: Float = 4f): Pair<Bitmap, LabelFit> {
+        val bmp = Bitmap.createBitmap(
+            Math.round(size.labelW * scale).coerceAtLeast(1), Math.round(size.labelH * scale).coerceAtLeast(1),
+            Bitmap.Config.ARGB_8888,
+        )
+        val canvas = Canvas(bmp)
+        canvas.drawColor(Color.WHITE)
+        canvas.scale(scale, scale)
+        val fit = draw(canvas, item, 0f, 0f, size.labelW, size.labelH)
+        return bmp to fit
+    }
+
+    private fun draw(canvas: Canvas, item: LabelItem, x: Float, y: Float, w: Float, h: Float): LabelFit {
         val pad = h * 0.08f
         val side = h - 2 * pad
         drawQr(canvas, item.code, x + pad, y + pad, side)
 
         val tx = x + pad + side + pad
         val tw = x + w - pad - tx
-        if (tw <= 4f) return
+        if (tw <= 4f) return LabelFit(titleCut = true, descriptionLines = 0, descriptionCut = item.lines.isNotEmpty(), linesDropped = 0)
         val title = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.BLACK; typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD); textSize = h * 0.17f
         }
@@ -130,16 +185,33 @@ object LabelPdf {
         val body = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; textSize = h * 0.115f }
 
         var baseline = y + pad + title.textSize
-        canvas.drawText(fit(item.title, title, tw), tx, baseline, title)
+        val titleText = fit(item.title, title, tw)
+        canvas.drawText(titleText, tx, baseline, title)
         val lines = mutableListOf<String>()
-        item.lines.firstOrNull()?.let { lines += wrap(it, body, tw, if (item.lines.size > 1) 2 else 3) }
+        val descMax = if (item.lines.size > 1) 2 else 3
+        var descLines = 0
+        var descCut = false
+        item.lines.firstOrNull()?.let { d ->
+            val wrapped = wrap(d, body, tw, descMax)
+            descLines = wrapped.size
+            descCut = wrapped.joinToString(" ").replace(Regex("\\s+"), " ") != d.trim().replace(Regex("\\s+"), " ")
+            lines += wrapped
+        }
         item.lines.drop(1).forEach { lines += fit(it, body, tw) }
         val bottom = y + h - pad
+        var drawn = 0
         for (l in lines) {
             baseline += body.textSize * 1.2f
             if (baseline > bottom) break
             canvas.drawText(l, tx, baseline, body)
+            drawn++
         }
+        return LabelFit(
+            titleCut = titleText != item.title,
+            descriptionLines = descLines,
+            descriptionCut = descCut || drawn < descLines,
+            linesDropped = lines.size - drawn,
+        )
     }
 
     private fun drawQr(canvas: Canvas, text: String, x: Float, y: Float, side: Float) {
@@ -234,7 +306,10 @@ object LabelPdf {
     }
 }
 
-/** Pick a label size, then share the PDF (e.g. to a label printer's app) or print it. */
+/**
+ * Pick a label size, see the first label as it will print (drawn by the PDF code), pick the first free slot on a
+ * partly used sheet, then share the PDF (e.g. to a label printer's app) or print it.
+ */
 @Composable
 fun LabelDialog(items: List<LabelItem>, prefs: Prefs, onDismiss: () -> Unit) {
     val context = LocalContext.current
@@ -244,10 +319,24 @@ fun LabelDialog(items: List<LabelItem>, prefs: Prefs, onDismiss: () -> Unit) {
                 ?: if (items.size > 1) LabelSize.LETTER_SHEET else LabelSize.BROTHER_62X29
         )
     }
+    var start by remember { mutableIntStateOf(0) }
+    var help by remember { mutableStateOf(false) }
+    // Drawn off the main thread; redrawn when the size changes.
+    val preview by produceState<Pair<Bitmap, LabelFit>?>(null, size, items.firstOrNull()) {
+        val first = items.firstOrNull()
+        value = if (first == null) null else withContext(Dispatchers.Default) {
+            try {
+                LabelPdf.preview(first, size)
+            } catch (e: Exception) {
+                null
+            }
+        }
+    }
 
     fun make(): File? = try {
         prefs.labelSize = size.name
-        File(File(context.cacheDir, "exports"), "part-stock-labels.pdf").also { LabelPdf.write(it, items, size) }
+        File(File(context.cacheDir, "exports"), "part-stock-labels.pdf")
+            .also { LabelPdf.write(it, items, size, if (size.sheet) start else 0) }
     } catch (e: Exception) {
         Toast.makeText(context, "Couldn't make the labels: ${e.message}", Toast.LENGTH_LONG).show()
         null
@@ -257,16 +346,56 @@ fun LabelDialog(items: List<LabelItem>, prefs: Prefs, onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         title = { Text(if (items.size == 1) "Make label" else "Make ${items.size} labels") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 if (items.isEmpty()) Text("Nothing to label.")
                 LabelSize.entries.forEach { s ->
                     FilterChip(selected = size == s, onClick = { size = s }, label = { Text(s.title) })
                 }
-                Text(
-                    "QR code plus part number, description and bin. Share sends the PDF to a label printer's app; " +
-                        "Print uses Android printing. Scan a label from the scan screen to open that part or set the bin.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                preview?.let { (bmp, fit) ->
+                    Image(
+                        bmp.asImageBitmap(),
+                        contentDescription = "Preview of the first label: ${items.first().title}",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxWidth()
+                            .aspectRatio(size.labelW / size.labelH)
+                            .border(1.dp, MaterialTheme.colorScheme.outline),
+                    )
+                    fit.warning()?.let { w ->
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(
+                                Icons.Filled.Warning, contentDescription = null, tint = ChartColors.warning(),
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Text(w, style = MaterialTheme.typography.bodySmall, color = ChartColors.warning())
+                        }
+                    }
+                }
+                if (size.sheet && items.isNotEmpty()) {
+                    SheetSlotPicker(count = items.size, start = start, onStart = { start = it })
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Share sends the PDF to a printer app; Print uses Android printing.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(onClick = { help = !help }) {
+                        Icon(Icons.Outlined.Info, contentDescription = if (help) "Hide label help" else "More about labels")
+                    }
+                }
+                if (help) {
+                    Text(
+                        "Each label has a QR code plus part number, description and bin. Scan a label from the scan " +
+                            "screen to open that part or set the bin. Label printer sizes print one label per page; " +
+                            "the Letter sheet fits Avery 5160 / 8160 (3 × 10). On a partly used sheet, tap the first " +
+                            "free slot so printing starts there.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         },
         confirmButton = {
@@ -283,4 +412,62 @@ fun LabelDialog(items: List<LabelItem>, prefs: Prefs, onDismiss: () -> Unit) {
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+/**
+ * The Letter sheet as a 3 × 10 grid: slots before [start] are already used (dimmed), the slots this print fills on
+ * the first page are shaded. Tap a slot to start there; − / + step it.
+ */
+@Composable
+private fun SheetSlotPicker(count: Int, start: Int, onStart: (Int) -> Unit) {
+    val filled = LabelSheet.onFirstPage(count, start)
+    val pages = LabelSheet.pages(count, start)
+    val used = MaterialTheme.colorScheme.surfaceVariant
+    val fill = MaterialTheme.colorScheme.primary
+    val empty = MaterialTheme.colorScheme.surface
+    val line = MaterialTheme.colorScheme.outline
+    Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(
+            Modifier.width(96.dp).border(1.dp, line).padding(3.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            for (r in 0 until LabelSheet.ROWS) {
+                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    for (c in 0 until LabelSheet.COLS) {
+                        val slot = r * LabelSheet.COLS + c
+                        val color = when {
+                            slot < start -> used
+                            slot < start + filled -> fill
+                            else -> empty
+                        }
+                        Box(
+                            Modifier.weight(1f).height(12.dp).background(color).border(0.5.dp, line)
+                                .clickable(onClickLabel = "Start at ${LabelSheet.describe(slot)}") { onStart(slot) }
+                                .semantics { contentDescription = "Slot ${slot + 1}, ${LabelSheet.describe(slot)}" },
+                        )
+                    }
+                }
+            }
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Start at slot ${start + 1}", style = MaterialTheme.typography.titleSmall)
+            Text(
+                LabelSheet.describe(start) + (if (start > 0) " · $start used" else ""),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row {
+                IconButton(enabled = start > 0, onClick = { onStart(start - 1) }) {
+                    Icon(Icons.Filled.Remove, contentDescription = "Start one slot earlier")
+                }
+                IconButton(enabled = start < LabelSheet.PER_PAGE - 1, onClick = { onStart(start + 1) }) {
+                    Icon(Icons.Filled.Add, contentDescription = "Start one slot later")
+                }
+            }
+            Text(
+                "$count label${if (count == 1) "" else "s"} on $pages page${if (pages == 1) "" else "s"}",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+    }
 }
