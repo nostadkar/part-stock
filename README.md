@@ -167,7 +167,10 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   quantity per board and reference designators (`,` `;` or tab separated; `R1-R4` ranges are expanded; DNP lines are
   left out) — or make a project from a scanned Entrust kit. Lines are matched to stock by MPN, then customer PN, then
   distributor PN; tap a line marked *No match* to pick the part (the search is pre-filled from its value and
-  footprint, e.g. `10k 0603`). The project opens with a gauge, boards buildable vs. the Boards number ("3 of 10"),
+  footprint, e.g. `10k 0603`). On the Projects list each card shows a state chip (*Ready to build ×N*, *Missing 3
+  parts*, *Needs matching (2 lines)*), a bar of its BOM lines split covered / partial / none / no match for one board,
+  and up to 3 blocking parts as category-icon chips (+N more); sort by Name, Closest to buildable or Most recently
+  changed (remembered). The project opens with a gauge, boards buildable vs. the Boards number ("3 of 10"),
   and the parts that limit it. Each BOM line has a coverage bar for that many boards (green covered, amber partly,
   red none, grey no match; *Worst first* puts the limiting lines on top), and a bar chart shows the 5 biggest
   shortages with how many to order (rounded up like the reorder list); tap one to jump to its line. Share or save the
@@ -268,8 +271,10 @@ app/src/main/java/com/partstock/scanner/
   OrderImport.kt             Import a Mouser / DigiKey order CSV
   ProjectsScreen.kt          Projects / BOMs: boards gauge, coverage bars, shortage chart, Build N
   BuildCharts.kt             Boards gauge, coverage bar and shortage chart shared by projects and kit builds
+  ProjectCards.kt            Projects list card: segmented BOM bar, state chip, blocking-part chips
   parse/BomCsv.java          BOM CSV reading, KiCad and generic (pure Java, unit tested)
   parse/BuildPlan.java       BOM matching, buildable count, per-line coverage and shortage maths (pure Java, unit tested)
+  parse/ProjectStatus.java   Projects list card: line counts, blockers, state chip and sort (pure Java, unit tested)
   parse/OrderCsv.java        Order CSV column mapping (pure Java, unit tested)
   parse/InventoryCsv.java    CSV read/write for export and restore (pure Java, unit tested)
   AutoBackup.kt              Writes the inventory CSV to a picked folder after each save

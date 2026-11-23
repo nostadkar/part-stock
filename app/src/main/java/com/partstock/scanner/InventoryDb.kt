@@ -1385,7 +1385,7 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
         BuildPlan.Stock().apply {
             id = p.id; mpn = p.mpn; customerPn = p.customerPn; distributorPn = p.distributorPn
             distributor = p.distributor; manufacturer = p.manufacturer; description = p.description
-            link = p.link(); onHand = p.quantity; unitCost = p.unitCost
+            link = p.link(); onHand = p.quantity; unitCost = p.unitCost; category = p.category
         }
     }
 

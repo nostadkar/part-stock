@@ -5,6 +5,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,6 +23,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Share
@@ -60,6 +62,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.partstock.scanner.parse.BomCsv
 import com.partstock.scanner.parse.BuildPlan
+import com.partstock.scanner.parse.ProjectStatus
 
 /**
  * Projects: a board with a BOM (imported from a KiCad / generic BOM CSV, or from a scanned Entrust kit). Shows how
@@ -101,14 +104,19 @@ fun ProjectsScreen(db: InventoryDb, onBack: () -> Unit) {
         return
     }
 
-    // Each project with how many boards the stock builds; read on IO (null while loading).
-    val listed by produceState<List<Pair<ProjectSummary, BuildPlan.Result>>?>(null, version) {
+    // Each project with its plan at 1 board, summarised for the card; read on IO (null while loading).
+    val listed by produceState<List<ProjectStatus.Row<ProjectSummary>>?>(null, version) {
         value = withContext(Dispatchers.IO) {
             val stock = db.planStock()
-            db.projects().map { p -> p to BuildPlan.plan(db.projectLines(p.id).map { it.toReq() }, stock, 1) }
+            db.projects().map { p ->
+                val plan = BuildPlan.plan(db.projectLines(p.id).map { it.toReq() }, stock, 1)
+                ProjectStatus.Row(p, p.name, p.updatedAt, ProjectStatus.of(plan))
+            }
         }
     }
-    val projects = listed.orEmpty()
+    val prefs = remember { Prefs(context) }
+    var sort by remember { mutableStateOf(ProjectStatus.Sort.parse(prefs.projectSort)) }
+    val projects = remember(listed, sort) { ProjectStatus.sorted(listed.orEmpty(), sort) }
 
     Scaffold(
         topBar = {
@@ -143,16 +151,40 @@ fun ProjectsScreen(db: InventoryDb, onBack: () -> Unit) {
                     )
                 }
             }
-            items(projects, key = { it.first.id }) { (p, plan) ->
+            if (projects.size > 1) {
+                item(key = "sort") {
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "Sort by",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        ProjectStatus.Sort.entries.forEach { option ->
+                            FilterChip(
+                                selected = sort == option,
+                                onClick = {
+                                    sort = option
+                                    prefs.projectSort = option.name
+                                },
+                                label = { Text(option.label) },
+                            )
+                        }
+                    }
+                }
+            }
+            items(projects, key = { it.item.id }) { row ->
+                val p = row.item
                 Card(Modifier.fillMaxWidth().clickable { openId = p.id }) {
                     Column(Modifier.padding(12.dp)) {
                         Text(p.name, style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "${p.lines} line${if (p.lines == 1) "" else "s"} · " + buildableText(plan) +
+                            "${p.lines} line${if (p.lines == 1) "" else "s"}" +
                                 (if (p.source.isNotBlank()) " · ${p.source}" else ""),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        ProjectCardStatus(row.summary)
                     }
                 }
             }
@@ -221,11 +253,6 @@ fun ProjectsScreen(db: InventoryDb, onBack: () -> Unit) {
             confirmButton = { TextButton(onClick = { pickingKit = false }) { Text("Close") } },
         )
     }
-}
-
-private fun buildableText(plan: BuildPlan.Result): String = when {
-    plan.unmatched > 0 -> "${plan.unmatched} unmatched"
-    else -> "can build ${plan.buildable}"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

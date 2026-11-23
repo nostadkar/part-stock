@@ -116,4 +116,9 @@ class Prefs(context: Context) {
     var swipeHintSeen: Boolean
         get() = sp.getBoolean("swipeHintSeen", false)
         set(v) = sp.edit().putBoolean("swipeHintSeen", v).apply()
+
+    /** Projects list order: a ProjectStatus.Sort name (default most recently changed). */
+    var projectSort: String
+        get() = sp.getString("projectSort", "RECENT") ?: "RECENT"
+        set(v) = sp.edit().putString("projectSort", v).apply()
 }

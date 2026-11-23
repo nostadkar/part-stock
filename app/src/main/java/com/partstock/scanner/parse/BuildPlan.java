@@ -20,6 +20,8 @@ public final class BuildPlan {
         public long id;
         public String mpn = "", customerPn = "", distributorPn = "", distributor = "", manufacturer = "",
                 description = "", link = "";
+        /** Categories bucket (blank = unknown). */
+        public String category = "";
         public int onHand;
         public Double unitCost;
     }
