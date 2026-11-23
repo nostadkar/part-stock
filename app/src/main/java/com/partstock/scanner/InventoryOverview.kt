@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.DonutLarge
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -25,6 +26,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +58,8 @@ internal fun OverviewCard(
     modifier: Modifier = Modifier,
     /** Opens a part from the "Most valuable parts" list. */
     onPart: (PartRow) -> Unit = {},
+    /** Opens the Activity page. */
+    onActivity: () -> Unit = {},
 ) {
     val slices = if (byValue) view.overviewValue else view.overviewPieces
     val palette = ChartColors.categorical()
@@ -151,6 +155,11 @@ internal fun OverviewCard(
                 Column(Modifier.padding(bottom = 8.dp)) {
                     view.mostValuable.forEachIndexed { i, p -> ValueRow(i + 1, p) { onPart(p) } }
                 }
+            }
+            TextButton(onClick = onActivity, modifier = Modifier.padding(bottom = 4.dp)) {
+                Icon(Icons.Filled.BarChart, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Activity: added vs used")
             }
         }
     }

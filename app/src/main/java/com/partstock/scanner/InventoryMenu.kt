@@ -10,6 +10,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AttachMoney
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.FileUpload
@@ -53,6 +54,8 @@ class InventoryMenuActions(
     val saveReorder: () -> Unit,
     /** Opens the Reorder screen (editable quantities, estimated cost). */
     val openReorder: () -> Unit = {},
+    /** Opens the Activity page (added vs used per week, most used, untouched stock). */
+    val openActivity: () -> Unit = {},
 )
 
 /**
@@ -117,6 +120,9 @@ fun InventoryMenuSheet(
                 share = { run(actions.shareReorder) }, save = { run(actions.saveReorder) },
                 enabled = !none,
             )
+
+            Section("Activity")
+            MenuRow(Icons.Filled.BarChart, "Activity: added vs used, most used…", onClick = { run(actions.openActivity) })
 
             Section("Kits")
             MenuRow(Icons.Filled.Build, "Build kit…", onClick = { run(actions.buildKit) })

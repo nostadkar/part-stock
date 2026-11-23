@@ -343,3 +343,41 @@ fun PriceStepChart(
         drawLine(color.copy(alpha = 0.4f), Offset(0f, bottom), Offset(size.width, bottom), strokeWidth = 1.dp.toPx())
     }
 }
+
+/**
+ * Two bars per slot side by side (e.g. pieces added vs used per week), oldest slot first, from 0 to the largest value.
+ * Colors alone don't tell the series apart for everyone, so put a labeled legend and totals next to it.
+ */
+@Composable
+fun PairedBarChart(
+    first: List<Int>,
+    second: List<Int>,
+    contentDescription: String,
+    modifier: Modifier = Modifier,
+    height: Dp = 140.dp,
+    firstColor: Color = ChartColors.fixed()[0],
+    secondColor: Color = ChartColors.fixed()[1],
+    animate: Boolean = !rememberReduceMotion(),
+) {
+    val n = maxOf(first.size, second.size)
+    val top = (first + second).maxOrNull()?.takeIf { it > 0 } ?: 1
+    val progress = drawIn(animate, first to second)
+    val axis = MaterialTheme.colorScheme.outlineVariant
+    Canvas(modifier.fillMaxWidth().height(height).semantics { this.contentDescription = contentDescription }) {
+        if (n == 0) return@Canvas
+        val base = size.height - 1.dp.toPx()
+        drawLine(axis, Offset(0f, base), Offset(size.width, base), strokeWidth = 1.dp.toPx())
+        val slot = size.width / n
+        // Thin slots (52 weeks) get no gap between the pair, wide ones a small one.
+        val gap = if (slot > 12.dp.toPx()) slot * 0.2f else slot * 0.1f
+        val bar = ((slot - gap) / 2f).coerceAtLeast(1f)
+        for (i in 0 until n) {
+            val x0 = i * slot + gap / 2f
+            listOf((first.getOrNull(i) ?: 0) to firstColor, (second.getOrNull(i) ?: 0) to secondColor).forEachIndexed { k, (v, c) ->
+                if (v <= 0) return@forEachIndexed
+                val h = (base * v / top * progress).coerceAtLeast(1.dp.toPx())
+                drawRect(c, topLeft = Offset(x0 + k * bar, base - h), size = Size(bar, h))
+            }
+        }
+    }
+}

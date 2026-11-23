@@ -225,8 +225,13 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   their minimum with the quantity to order (minimum − on hand, rounded up: exact below 10, then to 5s, 10s, 50s, 100s),
   MPN, last unit price and link. Its first two columns, *Mouser Part Number* and *Quantity*, are what Mouser's BOM tool
   asks for; DigiKey parts have their part number in a separate column.
+- **Activity** (⋮ menu → *Activity*, or *Activity* at the bottom of the Overview card): pieces added vs used per
+  week as paired bars (4 / 12 / 52 weeks), the 5 most used parts, how many parts in stock nobody has added to or used
+  in 12+ months (tap to list them, oldest first; parts added in that time don't count) and the biggest single changes.
+  It's worked out from the change history: added = scans, order imports and adds by hand; used = *Use* and builds;
+  undone changes are ignored and undo / CSV restore count as neither.
 - **Export** (⋮ menu on the Inventory screen, a bottom sheet grouped into Prices, Import, Export & share, Labels,
-  Reorder and Kits; each export row has *Share* and *Save* buttons): share or save the inventory CSV, or the scan log CSV
+  Reorder, Activity and Kits; each export row has *Share* and *Save* buttons): share or save the inventory CSV, or the scan log CSV
   (every save with the raw OCR text). *Quantity* is the total and *Location* the main bin; the last column,
   *Locations*, lists stock per bin like `A3: 200; R2: 1000` and is read back by *Restore from CSV*. The CSV opens directly in Google Sheets or Excel.
 - **Import an order** (⋮ menu on the Inventory screen → *Import Mouser / DigiKey order CSV…*): pick a CSV exported

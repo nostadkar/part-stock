@@ -144,6 +144,7 @@ fun InventoryScreen(
     var refreshing by remember { mutableStateOf(false) }
     var importingOrder by remember { mutableStateOf(false) }
     var reorderOpen by remember { mutableStateOf(false) }
+    var activityOpen by remember { mutableStateOf(false) }
     val reduceMotion = rememberReduceMotion()
     // Saved with the screen, so the list comes back at the same place (also after the app was stopped).
     val listState = rememberLazyListState()
@@ -240,6 +241,7 @@ fun InventoryScreen(
                 buildKit = { buildingKit = true },
                 importOrder = { importingOrder = true },
                 openReorder = { reorderOpen = true },
+                openActivity = { activityOpen = true },
                 shareInventory = { withCsv(db::inventoryCsv) { Export.share(context, Export.fileName("inventory"), it) } },
                 saveInventory = {
                     withCsv(db::inventoryCsv) {
@@ -300,6 +302,7 @@ fun InventoryScreen(
         open = { p -> selectedId = p.id },
         search = { q -> setQuery(q) },
         openReorder = { reorderOpen = true },
+        openActivity = { activityOpen = true },
         useOne = { p ->
             swipeHintDone()
             useParts(p, 1)
@@ -534,6 +537,18 @@ fun InventoryScreen(
     }
 
     if (reorderOpen) ReorderPage(vm) { reorderOpen = false }
+
+    if (activityOpen) {
+        ActivityPage(
+            db = db,
+            exists = { id -> data.parts.any { it.id == id } },
+            onPart = { id ->
+                activityOpen = false
+                selectedId = id
+            },
+            onClose = { activityOpen = false },
+        )
+    }
 
     if (importingOrder) {
         OrderImportFlow(

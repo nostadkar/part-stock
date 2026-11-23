@@ -9,6 +9,7 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import com.partstock.scanner.parse.ActivityStats
 import com.partstock.scanner.parse.BomCsv
 import com.partstock.scanner.parse.BuildPlan
 import com.partstock.scanner.parse.Categories
@@ -740,6 +741,49 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             }
         }
         return out
+    }
+
+    // ---------------------------------------------------------------- Activity page (read only)
+
+    /**
+     * History rows from [since] (a date, "yyyy-MM-dd") on, oldest first, with the part's current name ("" when the
+     * part is gone). Undone rows are left out; [ActivityStats] decides what counts as added or used.
+     */
+    fun activityChanges(since: String): List<ActivityStats.Change> =
+        readableDatabase.rawQuery(
+            "SELECT h.part_id, p.mpn, p.customer_pn, p.distributor_pn, h.ts, h.action, h.qty_before, h.qty_after " +
+                "FROM part_history h LEFT JOIN parts p ON p.id = h.part_id WHERE h.undone = 0 AND h.ts >= ? ORDER BY h.id",
+            arrayOf(since),
+        ).use { c ->
+            buildList {
+                while (c.moveToNext()) {
+                    val name = c.getString(1).orEmpty().ifBlank { c.getString(2).orEmpty().ifBlank { c.getString(3).orEmpty() } }
+                    add(ActivityStats.Change(
+                        c.getLong(0), name, c.getString(4), c.getString(5),
+                        if (c.isNull(6)) null else c.getInt(6), if (c.isNull(7)) null else c.getInt(7), false,
+                    ))
+                }
+            }
+        }
+
+    /** Per part: its newest stock change and creation in the history, and updated_at (for "not touched in a year"). */
+    fun activityTouches(): List<ActivityStats.Touch> {
+        val stock = ActivityStats.STOCK_ACTIONS.joinToString(",") { "?" }
+        return readableDatabase.rawQuery(
+            "SELECT p.id, p.mpn, p.customer_pn, p.distributor_pn, p.quantity, p.updated_at, " +
+                "(SELECT MAX(h.ts) FROM part_history h WHERE h.part_id = p.id AND h.undone = 0 " +
+                "AND (h.action IN ($stock) OR h.action LIKE 'use · %')), " +
+                "(SELECT MAX(h.ts) FROM part_history h WHERE h.part_id = p.id AND h.undone = 0 AND h.qty_before IS NULL) " +
+                "FROM parts p",
+            ActivityStats.STOCK_ACTIONS,
+        ).use { c ->
+            buildList {
+                while (c.moveToNext()) {
+                    val name = c.getString(1).orEmpty().ifBlank { c.getString(2).orEmpty().ifBlank { c.getString(3).orEmpty() } }
+                    add(ActivityStats.Touch(c.getLong(0), name, c.getInt(4), c.getString(6), c.getString(7), c.getString(5)))
+                }
+            }
+        }
     }
 
     // ---------------------------------------------------------------- stock per location

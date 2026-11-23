@@ -115,6 +115,8 @@ class InventoryListActions(
     val addN: ((PartRow, Int) -> Unit)? = null,
     /** Hides the "Swipe a row" tip for good. */
     val dismissSwipeHint: () -> Unit = {},
+    /** Opens the Activity page (from the Overview card). */
+    val openActivity: () -> Unit = {},
     /** Opens the Reorder screen ("Reorder (4)" under the Low stock filter). */
     val openReorder: (() -> Unit)? = null,
 )
@@ -212,7 +214,7 @@ fun InventoryList(
                     OverviewCard(
                         view = view, bucket = bucket, open = overviewOpen, byValue = overviewByValue,
                         onToggleOpen = actions.toggleOverview, onByValue = actions.setOverviewByValue,
-                        onCategory = actions.setBucket, onPart = actions.open,
+                        onCategory = actions.setBucket, onPart = actions.open, onActivity = actions.openActivity,
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -252,7 +254,7 @@ fun InventoryList(
                 OverviewCard(
                     view = view, bucket = bucket, open = overviewOpen, byValue = overviewByValue,
                     onToggleOpen = actions.toggleOverview, onByValue = actions.setOverviewByValue,
-                    onCategory = actions.setBucket, onPart = actions.open,
+                    onCategory = actions.setBucket, onPart = actions.open, onActivity = actions.openActivity,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 )
             }
