@@ -75,7 +75,7 @@ wallpaper; Settings → *Wallpaper colors* off (or Android 8–11) uses Part Sto
   `SOT-23`, `1%` matches the tolerance. Existing parts get these filled in from their description when you update.
   The CSV has Value, Tolerance, Voltage, Package and Datasheet columns.
 - **Unit cost** is an optional field (labels don't print prices). The Inventory screen totals the value.
-- **Settings → Mouser Search API key** turns on "Look up price on Mouser" in the review screen, which fills in the
+- **Settings → Mouser** (Search API key) turns on "Look up price on Mouser" in the review screen, which fills in the
   price (at your bag quantity), the official product link, and corrects an OCR slip in the part number.
 
 - **Automatic lookup**: with a Mouser key saved, the review screen starts the Mouser lookup as soon as it opens
@@ -200,12 +200,15 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   lines and *Add*: each is added to stock and matched to existing parts like a scan, with the file's unit price, a
   link and a category. The order number comes from the file (Sales Order #) or its name and can be edited; each
   order line is remembered, so importing the same order again shows "Already imported" and leaves those lines unticked.
+- **Settings** is a column of cards, each with a status chip (Mouser and DigiKey "Key saved" / "Not set", backup
+  age, amber after 7 days and red if the last one failed, file sync state, and "Update available"). Cards open and
+  close with a tap and remember it; one with a problem opens by itself. The version and build number are at the bottom.
 - **Backup & restore** (Settings): *Restore from CSV* loads an inventory CSV exported by the app (older exports
   without Category / Unit Cost / Link work too). Choose *Merge* (rows are matched like a scan, quantities set from the
   file, other parts kept) or *Replace everything* (the scan log is kept); a summary like "42 parts: 30 new, 12 updated"
   is shown before anything changes. *Auto backup* writes the inventory CSV to a folder you pick after every save and
   keeps the newest 5 files; pick a folder your cloud app syncs to keep a copy off the phone.
-- **Sync to a file** (Settings → Backup & restore): *New file…* or *Existing file…* opens Android's file picker; choose
+- **Sync to a file** (Settings → File sync): *New file…* or *Existing file…* opens Android's file picker; choose
   Google Drive there (or any other place) and that one CSV is rewritten with the inventory after every change, in the
   background. Open it in Google Sheets and it always shows current stock. Settings shows "Last synced 2 min ago" or why
   the last write failed; a failed write (offline, lost access) is retried on the next change and at the next app start,

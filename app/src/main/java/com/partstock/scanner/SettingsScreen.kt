@@ -16,12 +16,17 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Backup
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -44,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.selection.selectable
 import com.partstock.scanner.parse.InventoryCsv
+import com.partstock.scanner.parse.SettingsStatus
 import com.partstock.scanner.parse.SyncStatus
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
@@ -51,6 +57,7 @@ import kotlinx.coroutines.withContext
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.launch
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 
@@ -61,21 +68,22 @@ fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: 
     var saved by remember { mutableStateOf(secrets.hasMouserKey()) }
     var autoLookup by remember { mutableStateOf(prefs.autoMouserLookup) }
     var readBarcodes by remember { mutableStateOf(prefs.readBarcodes) }
-    var status by remember { mutableStateOf<String?>(null) }
+    var status by remember { mutableStateOf<SettingsStatus.Status?>(null) }
     var dkId by remember { mutableStateOf("") }
     var dkSecret by remember { mutableStateOf("") }
     var dkSaved by remember { mutableStateOf(secrets.hasDigiKey()) }
-    var dkStatus by remember { mutableStateOf<String?>(null) }
+    var dkStatus by remember { mutableStateOf<SettingsStatus.Status?>(null) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var checking by remember { mutableStateOf(false) }
-    var updateStatus by remember { mutableStateOf<String?>(null) }
+    var updateStatus by remember { mutableStateOf<SettingsStatus.Status?>(null) }
+    var latestKnown by remember { mutableIntStateOf(prefs.latestKnownBuild) }
     var update by remember { mutableStateOf<Updater.Release?>(null) }
     update?.let { r -> UpdateDialog(release = r, onLater = { update = null }, onClose = { update = null }) }
 
     // ---- backup & restore ----
     var restore by remember { mutableStateOf<RestorePlan?>(null) }
-    var restoreStatus by remember { mutableStateOf<String?>(null) }
+    var restoreStatus by remember { mutableStateOf<SettingsStatus.Status?>(null) }
     var backupFolder by remember { mutableStateOf(prefs.autoBackupUri) }
     var backupStatus by remember { mutableStateOf(prefs.autoBackupStatus) }
     var busy by remember { mutableStateOf(false) }
@@ -126,7 +134,7 @@ fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: 
                     )
                 }
             } catch (e: Exception) {
-                restoreStatus = "Can't restore: ${e.message}"
+                restoreStatus = statusFailed("Can't restore: ${e.message}")
             } finally {
                 busy = false
             }
@@ -148,6 +156,7 @@ fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: 
         scope.launch {
             withContext(Dispatchers.IO) { AutoBackup.runNow(context, prefs, db) }
             backupStatus = prefs.autoBackupStatus
+            syncTick++
             busy = false
         }
     }
@@ -166,10 +175,12 @@ fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: 
                             if (replace && prefs.autoBackupUri.isNotBlank()) AutoBackup.runNow(context, prefs, db)
                             db.importRows(plan.rows, replace = replace, dryRun = false)
                         }
-                        restoreStatus = if (replace) "Restored ${s.added} parts (replaced ${s.removed})."
-                        else "Merged: ${s.added} new, ${s.updated} updated."
+                        restoreStatus = statusOk(
+                            if (replace) "Restored ${s.added} parts (replaced ${s.removed})."
+                            else "Merged: ${s.added} new, ${s.updated} updated.",
+                        )
                     } catch (e: Exception) {
-                        restoreStatus = "Restore failed, nothing changed: ${e.message}"
+                        restoreStatus = statusFailed("Restore failed, nothing changed: ${e.message}")
                     } finally {
                         busy = false
                     }
@@ -188,274 +199,284 @@ fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: 
             )
         },
     ) { padding ->
+        val now = remember(syncTick) { System.currentTimeMillis() }
+        val mouserStatus = SettingsStatus.key(saved, "Key saved")
+        val dkChip = SettingsStatus.key(dkSaved, "Saved")
+        val backupChip = SettingsStatus.backup(
+            backupFolder.isNotBlank(), prefs.autoBackupLastOk, SettingsStatus.backupFailed(backupStatus), now,
+        )
+        val syncChip = SettingsStatus.sync(syncFile.isNotBlank(), prefs.syncLastOk, prefs.syncError, now)
+        val appChip = SettingsStatus.app(Updater.currentBuild(context), latestKnown.toLong(), Updater.currentName(context))
         Column(
             Modifier.fillMaxSize().padding(padding).imePadding().verticalScroll(rememberScrollState())
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Mouser Search API key", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Used only to look up the price, link and official description of a part on Mouser. " +
-                    "It is stored encrypted on this phone with the Android Keystore. It is not in the app's code, " +
-                    "it is left out of backups, and it never appears in exports.",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(
-                if (saved) "A key is saved on this phone." else "No key saved yet.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            OutlinedTextField(
-                value = key,
-                onValueChange = { key = it.trim() },
-                label = { Text(if (saved) "Replace key" else "Paste key") },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(
-                    enabled = key.isNotBlank(),
-                    onClick = {
-                        secrets.setMouserKey(key)
-                        key = ""
-                        saved = secrets.hasMouserKey()
-                        status = "Key saved"
-                    },
-                ) { Text("Save key") }
+            SettingsCard("mouser", Icons.Filled.Key, "Mouser", prefs, mouserStatus, openByDefault = !saved) {
+                Text(
+                    "Search API key, used only to look up the price, link and official description of a part on Mouser. " +
+                        "It is stored encrypted on this phone with the Android Keystore. It is not in the app's code, " +
+                        "it is left out of backups, and it never appears in exports.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                OutlinedTextField(
+                    value = key,
+                    onValueChange = { key = it.trim() },
+                    label = { Text(if (saved) "Replace key" else "Paste key") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(
+                        enabled = key.isNotBlank(),
+                        onClick = {
+                            secrets.setMouserKey(key)
+                            key = ""
+                            saved = secrets.hasMouserKey()
+                            status = statusOk("Key saved")
+                        },
+                    ) { Text("Save key") }
+                    if (saved) {
+                        OutlinedButton(onClick = {
+                            secrets.setMouserKey(null)
+                            saved = false
+                            status = statusNeutral("Key removed")
+                        }) { Text("Remove key") }
+                    }
+                }
+                status?.let { StatusLine(it) }
                 if (saved) {
-                    OutlinedButton(onClick = {
-                        secrets.setMouserKey(null)
-                        saved = false
-                        status = "Key removed"
-                    }) { Text("Remove key") }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Look up on Mouser after each scan", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                "Fills in the price as soon as a label is read, without tapping the button.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(checked = autoLookup, onCheckedChange = {
+                            autoLookup = it
+                            prefs.autoMouserLookup = it
+                        })
+                    }
                 }
             }
-            status?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-            if (saved) {
+
+            SettingsCard("digikey", Icons.Filled.VpnKey, "DigiKey", prefs, dkChip) {
+                Text(
+                    "Turns on \"Look up on DigiKey\" for DigiKey labels: price, link, description and category. " +
+                        "Create an app with the Product Information API at developer.digikey.com and paste its " +
+                        "Client ID and Client Secret here. Both are stored encrypted on this phone like the Mouser key, " +
+                        "left out of backups and never shown in exports.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                OutlinedTextField(
+                    value = dkId,
+                    onValueChange = { dkId = it.trim() },
+                    label = { Text(if (dkSaved) "Replace Client ID" else "Client ID") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = dkSecret,
+                    onValueChange = { dkSecret = it.trim() },
+                    label = { Text(if (dkSaved) "Replace Client Secret" else "Client Secret") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(
+                        enabled = dkId.isNotBlank() && dkSecret.isNotBlank(),
+                        onClick = {
+                            secrets.setDigiKey(dkId, dkSecret)
+                            dkId = ""
+                            dkSecret = ""
+                            dkSaved = secrets.hasDigiKey()
+                            dkStatus = statusOk("DigiKey credentials saved")
+                        },
+                    ) { Text("Save") }
+                    if (dkSaved) {
+                        OutlinedButton(onClick = {
+                            secrets.setDigiKey(null, null)
+                            dkSaved = false
+                            dkStatus = statusNeutral("DigiKey credentials removed")
+                        }) { Text("Remove") }
+                    }
+                }
+                dkStatus?.let { StatusLine(it) }
+            }
+
+            SettingsCard("scanning", Icons.Filled.QrCodeScanner, "Scanning & look", prefs, collapsible = false) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("Look up on Mouser after each scan", style = MaterialTheme.typography.bodyLarge)
+                        Text("Read label barcodes", style = MaterialTheme.typography.bodyLarge)
                         Text(
-                            "Fills in the price as soon as a label is read, without tapping the button.",
+                            "Also reads the DigiKey DataMatrix and Mouser barcodes on each scan. Barcodes are exact, so " +
+                                "where one disagrees with the text read, the barcode is used and the field says \"from barcode\".",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    Switch(checked = autoLookup, onCheckedChange = {
-                        autoLookup = it
-                        prefs.autoMouserLookup = it
+                    Switch(checked = readBarcodes, onCheckedChange = {
+                        readBarcodes = it
+                        prefs.readBarcodes = it
                     })
+                }
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Wallpaper colors", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                "Colors the app from your wallpaper (Android dynamic color). Off: Part Stock's own navy and amber.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(checked = AppTheme.dynamicColor, onCheckedChange = {
+                            AppTheme.dynamicColor = it
+                            prefs.dynamicColor = it
+                        })
+                    }
                 }
             }
 
-            HorizontalDivider(Modifier.padding(vertical = 8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Read label barcodes", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        "Also reads the DigiKey DataMatrix and Mouser barcodes on each scan. Barcodes are exact, so " +
-                            "where one disagrees with the text read, the barcode is used and the field says \"from barcode\".",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+            SettingsCard("backup", Icons.Filled.Backup, "Backup & restore", prefs, backupChip) {
+                Text(
+                    "The inventory lives only on this phone. Export it from the Inventory screen, or turn on auto backup, " +
+                        "then restore that CSV here after a reinstall or on a new phone.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                OutlinedButton(enabled = !busy, onClick = {
+                    pickCsv.launch(arrayOf("text/*", "application/csv", "application/vnd.ms-excel", "application/octet-stream"))
+                }) { Text("Restore from CSV…") }
+                restoreStatus?.let { StatusLine(it) }
+
+                Text("Auto backup", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+                Text(
+                    if (backupFolder.isBlank()) "Off. Pick a folder and the inventory CSV is written there after every save " +
+                        "(the newest ${AutoBackup.KEEP} files are kept). A folder synced by Drive or another cloud app works."
+                    else "On: writes to ${AutoBackup.folderLabel(backupFolder)} after every save, keeping the newest ${AutoBackup.KEEP}.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(enabled = !busy, onClick = { pickFolder.launch(null) }) {
+                        Text(if (backupFolder.isBlank()) "Choose folder…" else "Change folder…")
+                    }
+                    if (backupFolder.isNotBlank()) {
+                        OutlinedButton(enabled = !busy, onClick = {
+                            busy = true
+                            scope.launch {
+                                withContext(Dispatchers.IO) { AutoBackup.runNow(context, prefs, db) }
+                                backupStatus = prefs.autoBackupStatus
+                                syncTick++
+                                busy = false
+                            }
+                        }) { Text("Back up now") }
+                        TextButton(onClick = {
+                            try {
+                                context.contentResolver.releasePersistableUriPermission(
+                                    Uri.parse(backupFolder),
+                                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                                )
+                            } catch (_: Exception) {
+                            }
+                            prefs.autoBackupUri = ""
+                            prefs.autoBackupStatus = ""
+                            backupFolder = ""
+                            backupStatus = ""
+                        }) { Text("Turn off") }
+                    }
+                }
+                if (backupFolder.isNotBlank() && backupStatus.isNotBlank()) {
+                    StatusLine(if (SettingsStatus.backupFailed(backupStatus)) statusFailed(backupStatus) else statusOk(backupStatus))
+                }
+            }
+
+            SettingsCard("sync", Icons.Filled.Sync, "File sync", prefs, syncChip) {
+                Text(
+                    if (syncFile.isBlank()) "Off. Pick or create one CSV file and it is rewritten with the inventory after every " +
+                        "change. Choose Google Drive in the file picker and opening that file in Google Sheets always shows " +
+                        "current stock. No login or key is stored in the app."
+                    else "On: rewrites ${prefs.syncFileName.ifBlank { "the chosen file" }} after every change.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(enabled = !busy, onClick = { createSyncFile.launch("part-stock-inventory.csv") }) {
+                        Text("New file…")
+                    }
+                    OutlinedButton(enabled = !busy, onClick = {
+                        pickSyncFile.launch(arrayOf("text/*", "application/csv", "text/comma-separated-values", "application/octet-stream"))
+                    }) { Text("Existing file…") }
+                }
+                if (syncFile.isNotBlank()) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedButton(enabled = !busy, onClick = {
+                            busy = true
+                            scope.launch {
+                                withContext(Dispatchers.IO) { FileSync.runNow(context, prefs, db) }
+                                syncTick++
+                                busy = false
+                            }
+                        }) { Text("Sync now") }
+                        TextButton(onClick = {
+                            FileSync.turnOff(context, prefs)
+                            syncFile = ""
+                        }) { Text("Turn off") }
+                    }
+                    val line = remember(syncTick, syncFile) {
+                        SyncStatus.line(prefs.syncLastOk, prefs.syncError, System.currentTimeMillis())
+                    }
+                    StatusLine(
+                        if (prefs.syncError.isBlank()) SettingsStatus.Status(syncChip.level, line) else statusFailed(line),
                     )
                 }
-                Switch(checked = readBarcodes, onCheckedChange = {
-                    readBarcodes = it
-                    prefs.readBarcodes = it
-                })
             }
 
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Wallpaper colors", style = MaterialTheme.typography.bodyLarge)
-                        Text(
-                            "Colors the app from your wallpaper (Android dynamic color). Off: Part Stock's own navy and amber.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(checked = AppTheme.dynamicColor, onCheckedChange = {
-                        AppTheme.dynamicColor = it
-                        prefs.dynamicColor = it
-                    })
-                }
-            }
-
-            HorizontalDivider(Modifier.padding(vertical = 8.dp))
-            Text("DigiKey API (Client ID and Secret)", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Turns on \"Look up on DigiKey\" for DigiKey labels: price, link, description and category. " +
-                    "Create an app with the Product Information API at developer.digikey.com and paste its " +
-                    "Client ID and Client Secret here. Both are stored encrypted on this phone like the Mouser key, " +
-                    "left out of backups and never shown in exports.",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(
-                if (dkSaved) "DigiKey credentials are saved on this phone." else "No DigiKey credentials saved yet.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            OutlinedTextField(
-                value = dkId,
-                onValueChange = { dkId = it.trim() },
-                label = { Text(if (dkSaved) "Replace Client ID" else "Client ID") },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
-                value = dkSecret,
-                onValueChange = { dkSecret = it.trim() },
-                label = { Text(if (dkSaved) "Replace Client Secret" else "Client Secret") },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(
-                    enabled = dkId.isNotBlank() && dkSecret.isNotBlank(),
-                    onClick = {
-                        secrets.setDigiKey(dkId, dkSecret)
-                        dkId = ""
-                        dkSecret = ""
-                        dkSaved = secrets.hasDigiKey()
-                        dkStatus = "DigiKey credentials saved"
-                    },
-                ) { Text("Save") }
-                if (dkSaved) {
-                    OutlinedButton(onClick = {
-                        secrets.setDigiKey(null, null)
-                        dkSaved = false
-                        dkStatus = "DigiKey credentials removed"
-                    }) { Text("Remove") }
-                }
-            }
-            dkStatus?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-
-            HorizontalDivider(Modifier.padding(vertical = 8.dp))
-            Text("Backup & restore", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "The inventory lives only on this phone. Export it from the Inventory screen, or turn on auto backup, " +
-                    "then restore that CSV here after a reinstall or on a new phone.",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            OutlinedButton(enabled = !busy, onClick = {
-                pickCsv.launch(arrayOf("text/*", "application/csv", "application/vnd.ms-excel", "application/octet-stream"))
-            }) { Text("Restore from CSV…") }
-            restoreStatus?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-
-            Text("Auto backup", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
-            Text(
-                if (backupFolder.isBlank()) "Off. Pick a folder and the inventory CSV is written there after every save " +
-                    "(the newest ${AutoBackup.KEEP} files are kept). A folder synced by Drive or another cloud app works."
-                else "On: writes to ${AutoBackup.folderLabel(backupFolder)} after every save, keeping the newest ${AutoBackup.KEEP}.",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(enabled = !busy, onClick = { pickFolder.launch(null) }) {
-                    Text(if (backupFolder.isBlank()) "Choose folder…" else "Change folder…")
-                }
-                if (backupFolder.isNotBlank()) {
-                    OutlinedButton(enabled = !busy, onClick = {
-                        busy = true
-                        scope.launch {
-                            withContext(Dispatchers.IO) { AutoBackup.runNow(context, prefs, db) }
-                            backupStatus = prefs.autoBackupStatus
-                            busy = false
-                        }
-                    }) { Text("Back up now") }
-                    TextButton(onClick = {
-                        try {
-                            context.contentResolver.releasePersistableUriPermission(
-                                Uri.parse(backupFolder),
-                                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-                            )
-                        } catch (_: Exception) {
-                        }
-                        prefs.autoBackupUri = ""
-                        prefs.autoBackupStatus = ""
-                        backupFolder = ""
-                        backupStatus = ""
-                    }) { Text("Turn off") }
-                }
-            }
-            if (backupFolder.isNotBlank() && backupStatus.isNotBlank()) {
-                Text(backupStatus, style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-
-            Text("Sync to a file", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
-            Text(
-                if (syncFile.isBlank()) "Off. Pick or create one CSV file and it is rewritten with the inventory after every " +
-                    "change. Choose Google Drive in the file picker and opening that file in Google Sheets always shows " +
-                    "current stock. No login or key is stored in the app."
-                else "On: rewrites ${prefs.syncFileName.ifBlank { "the chosen file" }} after every change.",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(enabled = !busy, onClick = { createSyncFile.launch("part-stock-inventory.csv") }) {
-                    Text("New file…")
-                }
-                OutlinedButton(enabled = !busy, onClick = {
-                    pickSyncFile.launch(arrayOf("text/*", "application/csv", "text/comma-separated-values", "application/octet-stream"))
-                }) { Text("Existing file…") }
-            }
-            if (syncFile.isNotBlank()) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedButton(enabled = !busy, onClick = {
-                        busy = true
-                        scope.launch {
-                            withContext(Dispatchers.IO) { FileSync.runNow(context, prefs, db) }
-                            syncTick++
-                            busy = false
-                        }
-                    }) { Text("Sync now") }
-                    TextButton(onClick = {
-                        FileSync.turnOff(context, prefs)
-                        syncFile = ""
-                    }) { Text("Turn off") }
-                }
-                val line = remember(syncTick, syncFile) {
-                    SyncStatus.line(prefs.syncLastOk, prefs.syncError, System.currentTimeMillis())
-                }
+            SettingsCard("app", Icons.Filled.Info, "App", prefs, appChip, openByDefault = true) {
                 Text(
-                    line, style = MaterialTheme.typography.bodySmall,
-                    color = if (prefs.syncError.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant
-                    else MaterialTheme.colorScheme.error,
+                    "The app checks GitHub for a newer build when it starts and offers to install it. Your inventory is kept.",
+                    style = MaterialTheme.typography.bodyMedium,
                 )
+                OutlinedButton(
+                    enabled = !checking,
+                    onClick = {
+                        checking = true
+                        updateStatus = null
+                        scope.launch {
+                            try {
+                                val r = Updater.latest()
+                                if (r != null) {
+                                    prefs.latestKnownBuild = r.build
+                                    latestKnown = r.build
+                                }
+                                if (r != null && r.build > Updater.currentBuild(context)) update = r
+                                else updateStatus = statusOk("You have the latest build.")
+                            } catch (e: Exception) {
+                                updateStatus = statusFailed("Couldn't check: ${e.message}")
+                            } finally {
+                                checking = false
+                            }
+                        }
+                    },
+                ) { Text(if (checking) "Checking…" else "Check for updates") }
+                updateStatus?.let { StatusLine(it) }
             }
 
-            HorizontalDivider(Modifier.padding(vertical = 8.dp))
-            Text("App updates", style = MaterialTheme.typography.titleMedium)
+            // Version and build number (the build number is the GitHub Actions run number).
             Text(
-                "This is ${Updater.currentName(context)}. The app checks GitHub for a newer build when it starts " +
-                    "and offers to install it. Your inventory is kept.",
-                style = MaterialTheme.typography.bodyMedium,
+                "Part Stock ${Updater.currentName(context)} · build number ${Updater.currentBuild(context)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp),
             )
-            OutlinedButton(
-                enabled = !checking,
-                onClick = {
-                    checking = true
-                    updateStatus = null
-                    scope.launch {
-                        try {
-                            val r = Updater.latest()
-                            if (r != null && r.build > Updater.currentBuild(context)) update = r
-                            else updateStatus = "You have the latest build."
-                        } catch (e: Exception) {
-                            updateStatus = "Couldn't check: ${e.message}"
-                        } finally {
-                            checking = false
-                        }
-                    }
-                },
-            ) { Text(if (checking) "Checking…" else "Check for updates") }
-            updateStatus?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
         }
     }
 }

@@ -87,7 +87,8 @@ class SmokeTest {
 
         compose.onNodeWithContentDescription("Settings").assertIsDisplayed().performClick()
         compose.waitForIdle()
-        compose.onAllNodesWithText("Mouser Search API key").onFirst().assertExists()
+        compose.onAllNodesWithText("Mouser").onFirst().assertExists()
+        compose.onAllNodesWithText("Backup & restore").onFirst().assertExists()
         Espresso.pressBack()
         compose.waitForIdle()
         compose.onNodeWithText("Inventory ($partCount)").assertIsDisplayed()

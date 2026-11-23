@@ -55,6 +55,23 @@ class Prefs(context: Context) {
         get() = sp.getString("autoBackupStatus", "") ?: ""
         set(v) = sp.edit().putString("autoBackupStatus", v).apply()
 
+    /** When the last automatic backup was written (epoch ms); 0 = not recorded yet. */
+    var autoBackupLastOk: Long
+        get() = sp.getLong("autoBackupLastOk", 0L)
+        set(v) = sp.edit().putLong("autoBackupLastOk", v).apply()
+
+    /** Newest build seen on GitHub by an update check (for the "Update available" badge); 0 = never checked. */
+    var latestKnownBuild: Int
+        get() = sp.getInt("latestKnownBuild", 0)
+        set(v) = sp.edit().putInt("latestKnownBuild", v).apply()
+
+    /** Settings cards the user opened or closed, by id ("open" / "closed"); missing = the card's default. */
+    fun settingsCardOpen(id: String): Boolean? = sp.getString("settingsCard_$id", null)?.let { it == "open" }
+
+    fun setSettingsCardOpen(id: String, open: Boolean) {
+        sp.edit().putString("settingsCard_$id", if (open) "open" else "closed").apply()
+    }
+
     /** "Sync to a file": the picked file (SAF document URI) rewritten after every change; blank = off. */
     var syncFileUri: String
         get() = sp.getString("syncFileUri", "") ?: ""

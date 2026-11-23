@@ -30,6 +30,7 @@ object AutoBackup {
         return try {
             val name = write(context, tree, db.inventoryCsv())
             prefs.autoBackupStatus = "Last backup: $name"
+            prefs.autoBackupLastOk = System.currentTimeMillis()
             true
         } catch (e: Exception) {
             prefs.autoBackupStatus = "Last backup failed: ${e.message ?: e.javaClass.simpleName}"

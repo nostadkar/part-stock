@@ -81,6 +81,7 @@ object Updater {
         if (now - prefs.lastUpdateCheck < AUTO_CHECK_EVERY_MS) return null
         val r = try { latest() } catch (e: Exception) { return null } // offline: try again next launch
         prefs.lastUpdateCheck = now
+        if (r != null) prefs.latestKnownBuild = r.build
         if (r == null || r.build <= currentBuild(context) || r.build <= prefs.dismissedBuild) return null
         return r
     }
