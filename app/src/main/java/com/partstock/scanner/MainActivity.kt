@@ -1,5 +1,6 @@
 package com.partstock.scanner
 
+import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.graphics.Bitmap
 import android.os.Build
@@ -92,10 +93,33 @@ import com.partstock.scanner.parse.LabelCodes
 import com.partstock.scanner.parse.Locations
 import com.partstock.scanner.parse.LabelParser
 import com.partstock.scanner.parse.OcrLine
+import com.partstock.scanner.parse.AppShortcuts
 import com.partstock.scanner.parse.ParsedPart
 import com.partstock.scanner.parse.ScanMerger
 
 class MainActivity : ComponentActivity() {
+    private lateinit var prefs: Prefs
+    /** Where a launcher shortcut asked to start; App() takes it and clears it. */
+    private var start by mutableStateOf<StartRequest?>(null)
+    private var startCount = 0
+
+    private fun takeIntent(intent: Intent?) {
+        val bin = intent?.getStringExtra(AppShortcuts.EXTRA_BIN).orEmpty()
+        val s = AppShortcuts.resolve(intent?.action, bin) ?: return
+        start = StartRequest(s, bin, ++startCount)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        takeIntent(intent)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (::prefs.isInitialized) Shortcuts.update(applicationContext, prefs)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // The splash (icon on the brand color) shows while the app starts, instead of a blank window.
         installSplashScreen()
@@ -106,6 +130,9 @@ class MainActivity : ComponentActivity() {
         }
         enableEdgeToEdge()
         val prefs = Prefs(this)
+        this.prefs = prefs
+        // A shortcut's intent is handled once; a recreated activity (rotation, process restart) keeps its screen.
+        if (savedInstanceState == null) takeIntent(intent)
         AppTheme.dynamicColor = prefs.dynamicColor
         AppTheme.mode = ThemeMode.parse(prefs.themeMode)
         val db = InventoryDb(applicationContext)
@@ -123,10 +150,21 @@ class MainActivity : ComponentActivity() {
             val inventoryVm: InventoryViewModel = viewModel { InventoryViewModel(db) }
             val inventoryData by inventoryVm.data.collectAsStateWithLifecycle()
             CompositionLocalProvider(LocalJobs provides jobs, LocalBins provides inventoryData.locations) {
-                PartStockTheme { App(prefs, db, secrets) }
+                PartStockTheme { App(prefs, db, secrets, start, onStarted = { start = null }) }
             }
         }
     }
+}
+
+/** A launcher shortcut's start screen; [n] makes the same shortcut used twice a new request. */
+private data class StartRequest(val start: AppShortcuts.Start, val bin: String, val n: Int)
+
+/** The screen a shortcut opens; SCAN_INTO also sets the bin (in App). */
+private fun AppShortcuts.Start.screen(): Screen = when (this) {
+    AppShortcuts.Start.SCAN, AppShortcuts.Start.SCAN_INTO -> Screen.Scan
+    AppShortcuts.Start.INVENTORY -> Screen.Inventory()
+    AppShortcuts.Start.LOW_STOCK -> Screen.Inventory(lowOnly = true)
+    AppShortcuts.Start.SEARCH -> Screen.Inventory(search = true)
 }
 
 private sealed interface Screen {
@@ -140,7 +178,13 @@ private sealed interface Screen {
         val boxes: List<OcrLine> = emptyList(),
     ) : Screen
     /** [bin] = show only the parts in that bin (opened from the Locations screen). */
-    data class Inventory(val bin: String? = null, val openPart: Long? = null) : Screen
+    /** [lowOnly] / [search]: opened from the "Low stock" / "Search" launcher shortcut. */
+    data class Inventory(
+        val bin: String? = null,
+        val openPart: Long? = null,
+        val lowOnly: Boolean = false,
+        val search: Boolean = false,
+    ) : Screen
     data object Locations : Screen
     data object Settings : Screen
     data object Projects : Screen
@@ -208,11 +252,17 @@ private fun Tab.screen(): Screen = when (this) {
 }
 
 @Composable
-private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
+private fun App(
+    prefs: Prefs,
+    db: InventoryDb,
+    secrets: SecretStore,
+    start: StartRequest? = null,
+    onStarted: () -> Unit = {},
+) {
     val context = LocalContext.current
     // Saveable: after Android stops the app in the background it reopens on the same screen (the camera only starts
     // when that is Scan).
-    var screen by rememberSaveable(stateSaver = ScreenSaver) { mutableStateOf<Screen>(Screen.Scan) }
+    var screen by rememberSaveable(stateSaver = ScreenSaver) { mutableStateOf(start?.start?.screen() ?: Screen.Scan) }
     // A part page is open on Inventory (phone layout): the bottom bar is hidden there.
     var partPageOpen by remember { mutableStateOf(false) }
     // Parts are loaded on IO and kept up to date by the ViewModel (no database reads on the main thread).
@@ -228,6 +278,22 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
     var batchSaving by remember { mutableStateOf(false) }
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+
+    // Launcher shortcuts. Scan still goes through the camera permission prompt on the Scan screen.
+    LaunchedEffect(start) {
+        val r = start ?: return@LaunchedEffect
+        if (r.start == AppShortcuts.Start.SCAN_INTO) {
+            val bin = Locations.plain(r.bin)
+            prefs.lastLocation = bin
+            if (batchMode) {
+                batchBin = bin
+                prefs.batchBin = bin
+            }
+            toast("Scanning into ${Locations.normalize(bin)}")
+        }
+        screen = r.start.screen()
+        onStarted()
+    }
 
     // Undo snackbar after any save; an undo reloads the current screen.
     val snackbar = remember { SnackbarHostState() }
@@ -455,6 +521,8 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
                 onClearBin = { screen = Screen.Inventory() },
                 prefs = prefs,
                 openPart = s.openPart,
+                startLowOnly = s.lowOnly,
+                startSearch = s.search,
             )
         }
 

@@ -24,11 +24,16 @@
             android:exported="true"
             android:theme="@style/Theme.PartStock.Starting"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
-            android:windowSoftInputMode="adjustResize">
+            android:windowSoftInputMode="adjustResize"
+            android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Launcher shortcuts: Scan, Inventory, Low stock, Search (plus a dynamic "Scan into <bin>"). -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
         </activity>
 
         <!-- Hands exported CSV files to other apps (Drive, Gmail, etc) via the share sheet. -->

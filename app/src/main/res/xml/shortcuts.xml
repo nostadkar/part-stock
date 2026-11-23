@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Long-press the launcher icon. MainActivity maps each action (AppShortcuts) onto a start screen; an unknown
+     action opens Scan. The dynamic "Scan into <bin>" shortcut is added in code (Shortcuts.kt). -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="scan"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_scan"
+        android:shortcutShortLabel="@string/shortcut_scan_short"
+        android:shortcutLongLabel="@string/shortcut_scan_long">
+        <intent
+            android:action="com.partstock.scanner.action.SCAN"
+            android:targetPackage="com.partstock.scanner"
+            android:targetClass="com.partstock.scanner.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="inventory"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_inventory"
+        android:shortcutShortLabel="@string/shortcut_inventory_short"
+        android:shortcutLongLabel="@string/shortcut_inventory_long">
+        <intent
+            android:action="com.partstock.scanner.action.INVENTORY"
+            android:targetPackage="com.partstock.scanner"
+            android:targetClass="com.partstock.scanner.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="low_stock"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_low_stock"
+        android:shortcutShortLabel="@string/shortcut_low_short"
+        android:shortcutLongLabel="@string/shortcut_low_long">
+        <intent
+            android:action="com.partstock.scanner.action.LOW_STOCK"
+            android:targetPackage="com.partstock.scanner"
+            android:targetClass="com.partstock.scanner.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="search"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_search"
+        android:shortcutShortLabel="@string/shortcut_search_short"
+        android:shortcutLongLabel="@string/shortcut_search_long">
+        <intent
+            android:action="com.partstock.scanner.action.SEARCH"
+            android:targetPackage="com.partstock.scanner"
+            android:targetClass="com.partstock.scanner.MainActivity" />
+    </shortcut>
+</shortcuts>

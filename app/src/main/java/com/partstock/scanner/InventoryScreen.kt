@@ -90,6 +90,10 @@ fun InventoryScreen(
     onScan: () -> Unit = onBack,
     /** Told whether a part page fills the screen (one-pane layout), so the bottom bar can step aside. */
     onPartPage: (Boolean) -> Unit = {},
+    /** Opened from the "Low stock" launcher shortcut: turn the low-stock filter on. */
+    startLowOnly: Boolean = false,
+    /** Opened from the "Search" launcher shortcut: open the search field with the keyboard up. */
+    startSearch: Boolean = false,
 ) {
     val context = LocalContext.current
     val db = vm.db
@@ -110,6 +114,8 @@ fun InventoryScreen(
         vm.unpricedOnly.value = savedUnpriced
     }
     DisposableEffect(Unit) { onDispose { vm.clearFilters() } }
+    LaunchedEffect(startLowOnly) { if (startLowOnly) vm.lowOnly.value = true }
+    LaunchedEffect(startSearch) { if (startSearch) searching = true }
     val view by vm.view.collectAsStateWithLifecycle()
     val data by vm.data.collectAsStateWithLifecycle()
     val bucket by vm.bucket.collectAsStateWithLifecycle()

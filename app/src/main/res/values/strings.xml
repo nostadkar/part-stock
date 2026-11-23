@@ -1,3 +1,11 @@
 <resources>
     <string name="app_name">Part Stock</string>
+    <string name="shortcut_scan_short">Scan</string>
+    <string name="shortcut_scan_long">Scan a label</string>
+    <string name="shortcut_inventory_short">Inventory</string>
+    <string name="shortcut_inventory_long">Inventory</string>
+    <string name="shortcut_low_short">Low stock</string>
+    <string name="shortcut_low_long">Low stock</string>
+    <string name="shortcut_search_short">Search</string>
+    <string name="shortcut_search_long">Search parts</string>
 </resources>
