@@ -259,6 +259,7 @@ fun InventoryScreen(
                         label = if (prefs != null) ({ labels = listOf(partLabel(part)) }) else null,
                     ),
                     photoStrip = { PartPhotosRow(db, part.id) },
+                    loadHistory = { withContext(Dispatchers.IO) { db.history(part) } },
                 )
             } else {
                 val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(barState)

@@ -98,6 +98,8 @@ fun PartDetails(
     datasheets: DatasheetOpener,
     /** The photo strip with add / delete (see [PartPhotosRow]). */
     photoStrip: @Composable () -> Unit,
+    /** Reads the part's history (off the main thread) for the Stock over time card. */
+    loadHistory: suspend () -> List<HistoryEntry>,
 ) {
     val context = LocalContext.current
     var editing by remember { mutableStateOf(false) }
@@ -326,6 +328,8 @@ fun PartDetails(
                     InfoRow("Minimum", part.minQty?.toString() ?: "not set")
                 }
             }
+
+            if (!editing) StockOverTimeCard(part, loadHistory, actions.history)
 
             Section("Price", null) {
                 if (editing) {

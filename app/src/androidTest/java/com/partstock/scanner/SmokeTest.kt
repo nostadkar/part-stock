@@ -102,5 +102,20 @@ class SmokeTest {
             ),
         )
         walkScreens(3)
+        openPartPage("LM358DR")
+    }
+
+    /** Scan → Inventory → part page (with its Stock over time card) → back → back. */
+    private fun openPartPage(mpn: String) {
+        compose.onNodeWithText("Inventory (3)").performClick()
+        compose.waitForIdle()
+        compose.onAllNodesWithText(mpn).onFirst().performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Stock over time").assertExists()
+        Espresso.pressBack() // part page → Inventory
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Locations").assertIsDisplayed()
+        Espresso.pressBack() // Inventory → Scan
+        compose.waitForIdle()
     }
 }

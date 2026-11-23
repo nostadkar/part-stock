@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
@@ -162,18 +163,17 @@ internal fun HistoryDialog(db: InventoryDb, part: PartRow, onDismiss: () -> Unit
                 entries.forEach { h ->
                     Column {
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                historyIcon(h.action), contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(end = 8.dp).size(18.dp),
+                            )
                             Text(
                                 historyAction(h.action) + if (h.undone) " (undone)" else "",
                                 fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier.weight(1f),
                             )
-                            val qty = when {
-                                h.qtyBefore != null && h.qtyAfter != null && h.qtyBefore != h.qtyAfter -> "${h.qtyBefore} → ${h.qtyAfter}"
-                                h.qtyAfter != null -> "${h.qtyAfter}"
-                                h.qtyBefore != null -> "${h.qtyBefore} → –"
-                                else -> ""
-                            }
-                            Text(qty, style = MaterialTheme.typography.bodyMedium)
+                            HistoryDelta(h.qtyBefore, h.qtyAfter)
                         }
                         Text(
                             h.ts + if (h.legacy) " · from scan log" else "",
