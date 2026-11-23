@@ -156,7 +156,9 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   placeholder rows show instead of a blank list; thumbnails fade in as they're read.
   Transitions follow the system *Remove animations* setting (placeholders then stay still).
 - **Using parts**: − on a part's page uses one, *Use…* asks how many; the count drops and the scan log gets a
-  negative "use" entry. **Build kit** (⋮ menu on the Inventory screen): pick a kit, enter the number of boards,
+  negative "use" entry. On the Inventory list, swipe a row right to use 1 or left to add 1 (a haptic tick when it
+  will fire, then "Use 1 → 4 left" on the row and Undo); long-press a row's count to use or add several. TalkBack
+  offers the same as row actions. A one-time tip and a little nudge of the first row show that rows swipe. **Build kit** (⋮ menu on the Inventory screen): pick a kit, enter the number of boards,
   check the list (each part has the same coverage bar, and a "Short for N boards" chart shows what runs out), then *Use parts* subtracts per board × boards from every
   part. Kits are learned when you save a bag with its Entrust kit label (kit, per-board Qty and REF DES are stored).
   Counts never go below 0; you're asked to confirm first.

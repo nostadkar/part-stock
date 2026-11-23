@@ -181,10 +181,20 @@ fun InventoryScreen(
         }
     }
 
-    fun addOne(p: PartRow) {
+    fun addParts(p: PartRow, n: Int) {
         scope.launch {
-            val total = withContext(Dispatchers.IO) { db.addPieces(p.id, 1) }
-            UndoOffer.offer(context, "Added 1 ${p.key()} · $total in stock", db.lastChange)
+            val total = withContext(Dispatchers.IO) { db.addPieces(p.id, n) }
+            UndoOffer.offer(context, "Added $n ${p.key()} · $total in stock", db.lastChange)
+        }
+    }
+
+    fun addOne(p: PartRow) = addParts(p, 1)
+
+    var swipeHint by remember { mutableStateOf(prefs?.swipeHintSeen == false) }
+    fun swipeHintDone() {
+        if (swipeHint) {
+            swipeHint = false
+            prefs?.swipeHintSeen = true
         }
     }
 
@@ -296,8 +306,17 @@ fun InventoryScreen(
     val listActions = InventoryListActions(
         open = { p -> selectedId = p.id },
         search = { q -> setQuery(q) },
-        useOne = { p -> useParts(p, 1) },
-        addOne = ::addOne,
+        useOne = { p ->
+            swipeHintDone()
+            useParts(p, 1)
+        },
+        addOne = { p ->
+            swipeHintDone()
+            addOne(p)
+        },
+        useN = { p, n -> useParts(p, n) },
+        addN = { p, n -> addParts(p, n) },
+        dismissSwipeHint = ::swipeHintDone,
         setBucket = { vm.bucket.value = it },
         toggleLow = { vm.lowOnly.value = !lowOnly },
         toggleLowestFirst = { vm.lowestFirst.value = !vm.lowestFirst.value },
@@ -448,6 +467,7 @@ fun InventoryScreen(
                 overviewByValue = overviewByValue,
                 sideBySide = landscape && !twoPane,
                 unpricedBadge = unpricedBadge,
+                swipeHint = swipeHint,
                 modifier = Modifier.padding(top = padding.calculateTopPadding()),
                 header = {
                     if (bin != null) {

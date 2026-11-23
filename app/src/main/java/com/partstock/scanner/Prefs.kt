@@ -111,4 +111,9 @@ class Prefs(context: Context) {
     var dynamicColor: Boolean
         get() = sp.getBoolean("dynamicColor", true)
         set(v) = sp.edit().putBoolean("dynamicColor", v).apply()
+
+    /** The "Swipe a row to use or add one" tip was dismissed (or a row was swiped): never show it again. */
+    var swipeHintSeen: Boolean
+        get() = sp.getBoolean("swipeHintSeen", false)
+        set(v) = sp.edit().putBoolean("swipeHintSeen", v).apply()
 }

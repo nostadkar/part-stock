@@ -1,5 +1,8 @@
 package com.partstock.scanner
 
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Swipe
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -53,11 +56,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -100,6 +100,11 @@ class InventoryListActions(
     val toggleUnpriced: () -> Unit = {},
     /** Searches for a spec chip's text (tap 0603 → search "0603"). */
     val search: ((String) -> Unit)? = null,
+    /** Use or add several (long-press on a row's count). */
+    val useN: ((PartRow, Int) -> Unit)? = null,
+    val addN: ((PartRow, Int) -> Unit)? = null,
+    /** Hides the "Swipe a row" tip for good. */
+    val dismissSwipeHint: () -> Unit = {},
 )
 
 /** The inventory list: stat tiles, category chips, sticky category headers and swipeable part rows. */
@@ -124,8 +129,20 @@ fun InventoryList(
     sideBySide: Boolean = false,
     /** Mark unpriced rows with "$?" (off when there's nothing to price them with and no part has a price). */
     unpricedBadge: Boolean = false,
+    /** First run: a one-line "Swipe a row" tip under the tiles, and the first row peeks sideways once. */
+    swipeHint: Boolean = false,
 ) {
     val context = LocalContext.current
+    var bulkFor by remember { mutableStateOf<PartRow?>(null) }
+    bulkFor?.let { b ->
+        val fresh = view.parts.firstOrNull { it.id == b.id } ?: b
+        BulkStockDialog(
+            fresh,
+            onUse = { n -> actions.useN?.invoke(fresh, n); bulkFor = null },
+            onAdd = { n -> actions.addN?.invoke(fresh, n); bulkFor = null },
+            onDismiss = { bulkFor = null },
+        )
+    }
     if (!view.loaded) {
         // Placeholders shaped like the tiles and rows, instead of a blank list that pops in. Kept out of the LazyColumn,
         // so its saved scroll position isn't spent on the placeholders and comes back once the parts are there.
@@ -166,6 +183,28 @@ fun InventoryList(
                 )
             }
         }
+        if (swipeHint && withOverview) {
+            item(key = "swipe-hint") {
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Filled.Swipe, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp),
+                    )
+                    Text(
+                        "Swipe a row to use or add one",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f).padding(start = 8.dp),
+                    )
+                    IconButton(onClick = actions.dismissSwipeHint) {
+                        Icon(Icons.Filled.Close, contentDescription = "Dismiss tip")
+                    }
+                }
+            }
+        }
         if (withOverview && !sideBySide) {
             item(key = "overview") {
                 OverviewCard(
@@ -203,6 +242,7 @@ fun InventoryList(
                 )
             }
         }
+        val firstId = view.groups.firstOrNull()?.second?.firstOrNull()?.id
         view.groups.forEach { (cat, rows) ->
             stickyHeader(key = "h-$cat") {
                 Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
@@ -241,6 +281,7 @@ fun InventoryList(
                     onUse = { actions.useOne(p) },
                     onAdd = { actions.addOne(p) },
                     modifier = rowModifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    peek = swipeHint && p.id == firstId,
                 ) {
                     PartRowCard(
                         part = p,
@@ -252,6 +293,7 @@ fun InventoryList(
                         datasheets = datasheets,
                         unpricedBadge = unpricedBadge,
                         onSpecTap = actions.search,
+                        onLongCount = if (actions.useN != null) ({ bulkFor = p }) else null,
                     )
                 }
             }
@@ -393,62 +435,6 @@ private fun CategoryChips(view: InventoryView, bucket: String?, lowOnly: Boolean
 
 /** Swipe right to use one, left to add one; the row springs back and the change can be undone. */
 @Composable
-private fun SwipeRow(
-    part: PartRow,
-    onUse: () -> Unit,
-    onAdd: () -> Unit,
-    modifier: Modifier = Modifier,
-    content: @Composable () -> Unit,
-) {
-    // One action per swipe, even if the box reports the same swipe more than once.
-    val last = remember { longArrayOf(0L) }
-    val state = rememberSwipeToDismissBoxState(
-        confirmValueChange = { v ->
-            val now = System.currentTimeMillis()
-            if (v != SwipeToDismissBoxValue.Settled && now - last[0] > 600) {
-                last[0] = now
-                if (v == SwipeToDismissBoxValue.StartToEnd) onUse() else onAdd()
-            }
-            false // always spring back; the list updates with the new count
-        },
-    )
-    SwipeToDismissBox(
-        state = state,
-        // TalkBack users can't swipe a row: offer the same actions in its actions menu.
-        modifier = modifier.semantics {
-            customActions = listOf(
-                CustomAccessibilityAction("Use 1") { onUse(); true },
-                CustomAccessibilityAction("Add 1") { onAdd(); true },
-            )
-        },
-        backgroundContent = {
-            val dir = state.dismissDirection
-            val use = dir == SwipeToDismissBoxValue.StartToEnd
-            val color = when (dir) {
-                SwipeToDismissBoxValue.StartToEnd -> MaterialTheme.colorScheme.tertiaryContainer
-                SwipeToDismissBoxValue.EndToStart -> MaterialTheme.colorScheme.primaryContainer
-                SwipeToDismissBoxValue.Settled -> Color.Transparent
-            }
-            Box(
-                Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)).background(color).padding(horizontal = 20.dp),
-                contentAlignment = if (use) Alignment.CenterStart else Alignment.CenterEnd,
-            ) {
-                if (dir != SwipeToDismissBoxValue.Settled) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(if (use) Icons.Filled.Remove else Icons.Filled.Add, contentDescription = null)
-                        Text(
-                            if (use) "Use 1" else "Add 1",
-                            style = MaterialTheme.typography.labelLarge,
-                            modifier = Modifier.padding(start = 6.dp),
-                        )
-                    }
-                }
-            }
-        },
-    ) { content() }
-}
-
-@Composable
 private fun PartRowCard(
     part: PartRow,
     photo: String?,
@@ -459,6 +445,8 @@ private fun PartRowCard(
     datasheets: DatasheetOpener,
     unpricedBadge: Boolean = false,
     onSpecTap: ((String) -> Unit)? = null,
+    /** Long-press on the count: use or add several. */
+    onLongCount: (() -> Unit)? = null,
 ) {
     val p = part
     val mark = MaterialTheme.colorScheme.tertiaryContainer
@@ -518,9 +506,19 @@ private fun PartRowCard(
             Column(
                 horizontalAlignment = Alignment.End,
                 // One spoken summary instead of "Low stock", "3", "min 10" and the bar separately.
-                modifier = Modifier.clearAndSetSemantics {
-                    contentDescription = stockDescription(p, unpricedBadge && p.unitCost == null)
-                },
+                modifier = Modifier
+                    .let {
+                        if (onLongCount == null) it
+                        else it.combinedClickable(
+                            onClickLabel = "Open part",
+                            onLongClickLabel = "Use or add several",
+                            onClick = onClick,
+                            onLongClick = onLongCount,
+                        )
+                    }
+                    .clearAndSetSemantics {
+                        contentDescription = stockDescription(p, unpricedBadge && p.unitCost == null)
+                    },
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (p.isLow()) {
