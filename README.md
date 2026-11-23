@@ -46,6 +46,11 @@ empty inventory and with a few parts. One run is at 200% font size and checks th
 description for TalkBack. If the app crashes there, no release is published. Run it locally with
 `./gradlew connectedDebugAndroidTest` and a device or emulator attached.
 
+The same run takes screenshots of every screen (Scan, Inventory, a part page, Locations, Projects and a project,
+Settings, Review), empty and with parts, light and dark, at 100% and 200% font (`ScreenshotTest.kt`). They are
+uploaded as the **screenshots** artifact of the workflow run (kept 14 days, linked in the run summary), named like
+`04-locations-dark-parts-font200.png`. A screenshot problem never fails the build.
+
 The APK is signed with a test key kept in the repo (`app/partstock-test.keystore`), so each new build
 installs over the previous one and your inventory is kept. Don't reuse that key for anything published.
 

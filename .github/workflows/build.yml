@@ -36,8 +36,10 @@ jobs:
 
       # Cold boot every time: booting from a cached AVD snapshot hung on GitHub's runners. The time limit stops a stuck
       # emulator from holding the run for hours (a timeout fails the step, so nothing is published).
+      # Also takes screenshots of every screen (ScreenshotTest, #58) into /sdcard/Download/part-stock-screenshots; they
+      # are pulled whether or not the tests pass, and the step then exits with the tests' own result.
       - name: Smoke test on emulator
-        timeout-minutes: 25
+        timeout-minutes: 35
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
@@ -46,7 +48,38 @@ jobs:
           force-avd-creation: false
           emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
-          script: ./gradlew :app:connectedDebugAndroidTest --stacktrace
+          script: |
+            ./gradlew :app:connectedDebugAndroidTest --stacktrace; echo $? > smoke-exit.txt
+            timeout 120 adb pull /sdcard/Download/part-stock-screenshots . || echo "No screenshots pulled"
+            exit $(cat smoke-exit.txt)
+
+      # Screenshots for checking GUI changes by eye; a problem here never fails the build.
+      - name: Upload screenshots
+        id: shots
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: part-stock-screenshots/
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Screenshots link in the run summary
+        if: always()
+        continue-on-error: true
+        env:
+          SHOTS_URL: ${{ steps.shots.outputs.artifact-url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          n=$(ls part-stock-screenshots/*.png 2>/dev/null | wc -l)
+          if [ -n "$SHOTS_URL" ]; then
+            echo "### Screenshots: $n PNGs ([download]($SHOTS_URL))" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Screenshots: none uploaded (run: $RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          ls part-stock-screenshots 2>/dev/null | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY" || true
 
       - name: Name the APK
         run: cp app/build/outputs/apk/release/app-release.apk part-stock.apk
