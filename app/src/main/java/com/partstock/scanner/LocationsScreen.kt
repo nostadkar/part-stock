@@ -229,7 +229,10 @@ fun LocationsScreen(
             title = { Text("Rename ${b.name}") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(name, { name = it }, label = { Text("New name") }, singleLine = true)
+                    OutlinedTextField(
+                        name, { name = it }, label = { Text("New name") }, singleLine = true,
+                        keyboardOptions = codeKeys(last = true), modifier = Modifier.bringIntoViewOnFocus(),
+                    )
                     Text(
                         if (existing) "That bin exists already: the parts are merged into it and counts added."
                         else "Renames the bin on all ${b.parts} part${if (b.parts == 1) "" else "s"}.",

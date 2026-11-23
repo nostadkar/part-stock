@@ -18,7 +18,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -65,7 +64,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.partstock.scanner.parse.Categories
 import com.partstock.scanner.parse.Links
@@ -117,14 +115,16 @@ internal fun MoveDialog(
                         )
                     }
                 }
-                OutlinedTextField(
+                NumberField(
                     qtyText, { v -> qtyText = v.filter { it.isDigit() }.take(7) },
-                    label = { Text("How many") }, singleLine = true,
+                    label = "How many",
                     supportingText = { Text(if (n > have) "Only $have in $from" else "$have in $from") },
                     isError = n > have,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 )
-                OutlinedTextField(to, { to = it }, label = { Text("To bin") }, singleLine = true)
+                OutlinedTextField(
+                    to, { to = it }, label = { Text("To bin") }, singleLine = true,
+                    keyboardOptions = codeKeys(last = true), modifier = Modifier.bringIntoViewOnFocus(),
+                )
                 val others = knownBins.filter { k -> from == null || !Locations.same(k, from) }
                 if (others.isNotEmpty()) {
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {

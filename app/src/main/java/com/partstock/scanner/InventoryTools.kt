@@ -17,7 +17,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -64,7 +63,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.partstock.scanner.parse.BuildPlan
 import com.partstock.scanner.parse.Categories
@@ -172,14 +170,13 @@ internal fun BuildKitDialog(db: InventoryDb, onDismiss: () -> Unit, onBuilt: (St
                         },
                     )
                 }
-                OutlinedTextField(
+                NumberField(
                     boardsText,
                     { v ->
                         boardsText = v.filter { it.isDigit() }.take(5)
                         confirmShort = false
                     },
-                    label = { Text("Boards") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    label = "Boards", last = true,
                 )
                 if (boards > 0 && short.isNotEmpty()) {
                     // Same "Short for N boards" chart as a project.

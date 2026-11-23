@@ -277,6 +277,7 @@ private fun OrderLinesContent(
                     label = { Text("Order number") },
                     supportingText = { Text("Used to recognise this order if it's imported again") },
                     singleLine = true,
+                    keyboardOptions = codeKeys(last = true),
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -455,7 +456,8 @@ private fun OrderBinDialog(
                     label = { Text("Bin") },
                     placeholder = { Text("e.g. A3") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = codeKeys(last = true),
+                    modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
                 )
                 if (knownBins.isNotEmpty()) {
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {

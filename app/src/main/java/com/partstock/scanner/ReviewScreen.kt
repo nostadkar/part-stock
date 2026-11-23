@@ -65,8 +65,8 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.partstock.scanner.parse.Categories
 import com.partstock.scanner.parse.FieldReader
@@ -529,6 +529,7 @@ fun ReviewScreen(
             StockBanner(existing, hasKey, qty.trim().toIntOrNull(), addMode, location)
 
             Field("Manufacturer part number", mpn, { mpn = it }, mono = true,
+                capitalization = KeyboardCapitalization.Characters,
                 onFocus = { focusChanged(FieldReader.Field.MPN, it) },
                 status = status.getValue(LabelBarcode.F_MPN), change = changes[LabelBarcode.F_MPN],
                 focus = focus.getValue(LabelBarcode.F_MPN),
@@ -556,11 +557,10 @@ fun ReviewScreen(
                 focus = focus.getValue(F_MANUFACTURER))
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
+                NumberField(
                     value = qty,
                     onValueChange = { v -> qty = v.filter { it.isDigit() } },
-                    label = { Text("Quantity") },
-                    singleLine = true,
+                    label = "Quantity",
                     supportingText = statusText(status.getValue(LabelBarcode.F_QTY), changes[LabelBarcode.F_QTY]),
                     trailingIcon = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -568,7 +568,6 @@ fun ReviewScreen(
                             RescanIcon("quantity") { rescan = FieldReader.Field.QUANTITY }
                         }
                     },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.weight(1f).focusRequester(focus.getValue(LabelBarcode.F_QTY))
                         .onFocusChanged { focusChanged(FieldReader.Field.QUANTITY, it.isFocused) },
                 )
@@ -577,8 +576,8 @@ fun ReviewScreen(
                     onValueChange = { location = it },
                     label = { Text("Bin / location") },
                     singleLine = true,
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
-                    modifier = Modifier.weight(1f),
+                    keyboardOptions = codeKeys(),
+                    modifier = Modifier.weight(1f).bringIntoViewOnFocus(),
                 )
             }
 
@@ -589,16 +588,15 @@ fun ReviewScreen(
                 FilterChip(selected = !addMode, onClick = { addMode = false }, label = { Text("Set count to this") })
             }
 
-            OutlinedTextField(
+            NumberField(
                 value = unitCost,
                 onValueChange = { v ->
                     unitCost = v.filter { it.isDigit() || it == '.' }
                     priceSource = ""
                 },
-                label = { Text("Unit cost (each)") },
-                singleLine = true,
+                label = "Unit cost (each)",
+                decimal = true,
                 prefix = { Text("$") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 supportingText = {
                     val total = unitCost.toDoubleOrNull()?.let { c -> qty.toIntOrNull()?.let { n -> c * n } }
                     Text(if (total != null) "This entry: \$${InventoryDb.fmtMoney(total)}" else "Labels don't print a price")
@@ -652,17 +650,19 @@ fun ReviewScreen(
 
             Field(
                 (part.distributor ?: "Distributor") + " part number", distributorPn, { distributorPn = it }, mono = true,
+                capitalization = KeyboardCapitalization.Characters,
                 onFocus = { focusChanged(FieldReader.Field.DISTRIBUTOR_PN, it) },
                 status = status.getValue(LabelBarcode.F_DIST_PN), change = changes[LabelBarcode.F_DIST_PN],
                 focus = focus.getValue(LabelBarcode.F_DIST_PN),
                 onRescan = { rescan = FieldReader.Field.DISTRIBUTOR_PN },
             )
             Field("Customer / Entrust PN", customerPn, { customerPn = it }, mono = true,
+                capitalization = KeyboardCapitalization.Characters,
                 onFocus = { focusChanged(FieldReader.Field.CUSTOMER_PN, it) },
                 status = status.getValue(LabelBarcode.F_CUST_PN), change = changes[LabelBarcode.F_CUST_PN],
                 focus = focus.getValue(LabelBarcode.F_CUST_PN),
                 onRescan = { rescan = FieldReader.Field.CUSTOMER_PN })
-            Field("Notes", notes, { notes = it }, singleLine = false)
+            Field("Notes", notes, { notes = it }, singleLine = false, imeAction = ImeAction.Done)
 
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
@@ -891,6 +891,10 @@ private fun Field(
     onRescan: (() -> Unit)? = null,
     /** Told when the field gains or loses focus (to highlight its line on the photo). */
     onFocus: ((Boolean) -> Unit)? = null,
+    /** All-caps hint only for codes (part numbers, bins); prose fields use sentence case. */
+    capitalization: KeyboardCapitalization = KeyboardCapitalization.Sentences,
+    /** Next moves to the following field; the last field uses Done (hides the keyboard, never saves). */
+    imeAction: ImeAction = ImeAction.Next,
 ) {
     val icon = statusIcon(status.kind)
     OutlinedTextField(
@@ -912,8 +916,13 @@ private fun Field(
         } else {
             null
         },
-        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
+        keyboardOptions = KeyboardOptions(
+            capitalization = capitalization,
+            autoCorrectEnabled = capitalization != KeyboardCapitalization.Characters,
+            imeAction = imeAction,
+        ),
         modifier = Modifier.fillMaxWidth()
+            .bringIntoViewOnFocus()
             .then(if (focus != null) Modifier.focusRequester(focus) else Modifier)
             .then(if (onFocus != null) Modifier.onFocusChanged { onFocus(it.isFocused) } else Modifier),
     )

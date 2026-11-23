@@ -19,7 +19,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.FilterChip
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -58,7 +57,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.partstock.scanner.parse.BomCsv
 import com.partstock.scanner.parse.BuildPlan
@@ -212,7 +210,10 @@ fun ProjectsScreen(db: InventoryDb, onBack: () -> Unit) {
                             "${bom.lines.sumOf { it.perBoard }} parts per board" +
                             (if (bom.dnp > 0) " (${bom.dnp} DNP line${if (bom.dnp == 1) "" else "s"} left out)" else ""),
                     )
-                    OutlinedTextField(name, { name = it }, label = { Text("Project name") }, singleLine = true)
+                    OutlinedTextField(
+                        name, { name = it }, label = { Text("Project name") }, singleLine = true,
+                        keyboardOptions = textKeys(last = true), modifier = Modifier.bringIntoViewOnFocus(),
+                    )
                 }
             },
             confirmButton = {
@@ -343,12 +344,11 @@ private fun ProjectDetail(db: InventoryDb, id: Long, onBack: () -> Unit) {
             // Item 1: boards and Build.
             item(key = "boards") {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
+                    NumberField(
                         boardsText,
                         { v -> boardsText = v.filter { it.isDigit() }.take(5) },
-                        label = { Text("Boards") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        label = "Boards",
+                        last = true,
                         modifier = Modifier.width(120.dp),
                     )
                     Button(onClick = { confirmBuild = true }, enabled = boards > 0 && plan.use.isNotEmpty()) {

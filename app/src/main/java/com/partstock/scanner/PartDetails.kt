@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -16,7 +17,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -63,7 +63,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.partstock.scanner.parse.Links
@@ -196,7 +195,7 @@ fun PartDetails(
         },
     ) { padding ->
         Column(
-            Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+            Modifier.fillMaxSize().padding(padding).imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             // Photo (flies in from the row) and the strip to add more.
@@ -220,7 +219,10 @@ fun PartDetails(
             photoStrip()
 
             if (editing) {
-                OutlinedTextField(description, { description = it }, label = { Text("Description") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(
+                    description, { description = it }, label = { Text("Description") },
+                    keyboardOptions = textKeys(), modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
+                )
                 CategoryPicker(category) { category = it }
             } else if (part.description.isNotBlank()) {
                 Text(part.description, style = MaterialTheme.typography.bodyLarge)
@@ -325,29 +327,27 @@ fun PartDetails(
                                     b + if (Locations.same(b, part.location)) " (main)" else "",
                                     modifier = Modifier.weight(1f),
                                 )
-                                OutlinedTextField(
-                                    binQty[i], { v -> binQty[i] = v.filter { it.isDigit() }.take(7) }, singleLine = true,
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                NumberField(
+                                    binQty[i], { v -> binQty[i] = v.filter { it.isDigit() }.take(7) },
                                     modifier = Modifier.width(110.dp),
                                 )
                             }
                         }
                     } else {
-                        OutlinedTextField(
-                            qty, { v -> qty = v.filter { it.isDigit() } }, label = { Text("Quantity") }, singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        NumberField(
+                            qty, { v -> qty = v.filter { it.isDigit() } }, label = "Quantity",
                             modifier = Modifier.fillMaxWidth(),
                         )
                         OutlinedTextField(
                             location, { location = it }, label = { Text("Bin / location") }, singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
+                            keyboardOptions = codeKeys(),
+                            modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
                         )
                     }
-                    OutlinedTextField(
+                    NumberField(
                         minimum, { v -> minimum = v.filter { it.isDigit() }.take(7) },
-                        label = { Text("Minimum (optional)") }, singleLine = true,
+                        label = "Minimum (optional)",
                         supportingText = { Text("Low stock when the count is at or below this") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth(),
                     )
                 } else {
@@ -362,10 +362,9 @@ fun PartDetails(
 
             Section("Price", null) {
                 if (editing) {
-                    OutlinedTextField(
-                        cost, { v -> cost = v.filter { it.isDigit() || it == '.' } }, label = { Text("Unit cost (each)") },
-                        singleLine = true, prefix = { Text("$") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    NumberField(
+                        cost, { v -> cost = v.filter { it.isDigit() || it == '.' } }, label = "Unit cost (each)",
+                        decimal = true, last = true, prefix = { Text("$") },
                         modifier = Modifier.fillMaxWidth(),
                     )
                 } else {
@@ -497,13 +496,12 @@ private fun UseDialog(stock: Int, onDismiss: () -> Unit, onUse: (Int) -> Unit) {
         title = { Text("Use parts") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
+                NumberField(
                     text, { v ->
                         text = v.filter { it.isDigit() }.take(6)
                         confirm = false
                     },
-                    label = { Text("How many") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    label = "How many", last = true,
                 )
                 Text(
                     if (n > stock) "Only $stock in stock; this sets it to 0." else "After use: ${stock - n}",
