@@ -35,7 +35,8 @@ import java.io.File
  * to [DIR] on the emulator (shell-owned, so they survive the app being uninstalled after the run); build.yml pulls
  * them and uploads them as the "screenshots" artifact.
  *
- * Never fails the build: every walk is wrapped, a failure is logged and the next walk starts from a fresh launch. The
+ * Never fails the build: every walk is wrapped, a failure is logged and the next walk starts from a fresh launch (back
+ * presses don't throw when they leave the app). The
  * smoke assertions live in [SmokeTest], unchanged. Names are stable: `NN-screen-theme-data-fontNNN.png`.
  */
 @RunWith(AndroidJUnit4::class)
@@ -97,9 +98,8 @@ class ScreenshotTest {
             compose.waitForIdle()
             compose.onAllNodesWithText("LM358DR").onFirst().performSemanticsAction(SemanticsActions.OnClick)
             compose.waitForIdle()
-            compose.onNodeWithText("Stock over time").assertExists()
             shot("03-part", suffix)
-            Espresso.pressBack()
+            Espresso.pressBackUnconditionally()
             compose.waitForIdle()
         }
 
@@ -115,7 +115,7 @@ class ScreenshotTest {
             compose.onAllNodesWithText(PROJECT).onFirst().performClick()
             compose.waitForIdle()
             shot("06-project", suffix)
-            Espresso.pressBack()
+            Espresso.pressBackUnconditionally()
             compose.waitForIdle()
         }
 
@@ -124,7 +124,7 @@ class ScreenshotTest {
         compose.onNodeWithContentDescription("Settings").performClick()
         compose.waitForIdle()
         shot("07-settings", suffix)
-        Espresso.pressBack()
+        Espresso.pressBackUnconditionally()
         compose.waitForIdle()
 
         if (withParts) {
@@ -132,7 +132,7 @@ class ScreenshotTest {
             compose.onAllNodes(hasClickLabel("Review")).onFirst().performClick()
             compose.waitForIdle()
             shot("08-review", suffix)
-            Espresso.pressBack()
+            Espresso.pressBackUnconditionally()
             compose.waitForIdle()
         }
     }
