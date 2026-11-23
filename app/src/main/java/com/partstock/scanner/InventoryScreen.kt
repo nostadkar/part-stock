@@ -195,6 +195,9 @@ fun InventoryScreen(
         }
     }
 
+    var overviewOpen by remember { mutableStateOf(prefs?.overviewOpen ?: true) }
+    var overviewByValue by remember { mutableStateOf(prefs?.overviewByValue ?: false) }
+
     val listActions = InventoryListActions(
         open = { p -> selectedId = p.id },
         useOne = { p -> useParts(p, 1) },
@@ -208,6 +211,14 @@ fun InventoryScreen(
             if (query.isNotEmpty()) setQuery("")
         },
         scan = onScan,
+        toggleOverview = {
+            overviewOpen = !overviewOpen
+            prefs?.overviewOpen = overviewOpen
+        },
+        setOverviewByValue = { v ->
+            overviewByValue = v
+            prefs?.overviewByValue = v
+        },
     )
 
     SharedTransitionLayout {
@@ -417,6 +428,8 @@ fun InventoryScreen(
                         scopes = scopes,
                         animate = !reduceMotion,
                         datasheets = datasheets,
+                        overviewOpen = overviewOpen,
+                        overviewByValue = overviewByValue,
                         modifier = Modifier.padding(top = padding.calculateTopPadding()),
                         header = {
                             if (bin != null) {

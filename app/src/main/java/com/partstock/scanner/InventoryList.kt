@@ -81,6 +81,10 @@ class InventoryListActions(
     val toggleLowestFirst: () -> Unit,
     val clearFilters: () -> Unit,
     val scan: () -> Unit,
+    /** Opens or collapses the Overview card. */
+    val toggleOverview: () -> Unit = {},
+    /** Overview donut by value (true) or pieces. */
+    val setOverviewByValue: (Boolean) -> Unit = {},
 )
 
 /** The inventory list: stat tiles, category chips, sticky category headers and swipeable part rows. */
@@ -99,6 +103,8 @@ fun InventoryList(
     datasheets: DatasheetOpener,
     modifier: Modifier = Modifier,
     header: @Composable () -> Unit = {},
+    overviewOpen: Boolean = true,
+    overviewByValue: Boolean = false,
 ) {
     val context = LocalContext.current
     LazyColumn(
@@ -109,6 +115,17 @@ fun InventoryList(
         item(key = "header") { header() }
         item(key = "stats") {
             StatTiles(view, lowOnly, onLow = actions.toggleLow, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+        }
+        // Hidden while loading and with an empty inventory.
+        if (view.loaded && view.parts.isNotEmpty()) {
+            item(key = "overview") {
+                OverviewCard(
+                    view = view, bucket = bucket, open = overviewOpen, byValue = overviewByValue,
+                    onToggleOpen = actions.toggleOverview, onByValue = actions.setOverviewByValue,
+                    onCategory = actions.setBucket,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+            }
         }
         if (view.counts.size > 1 || view.tracked) {
             item(key = "chips") {

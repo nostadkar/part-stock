@@ -3,6 +3,7 @@ package com.partstock.scanner
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.partstock.scanner.parse.Categories
+import com.partstock.scanner.parse.ChartData
 import com.partstock.scanner.parse.Locations
 import com.partstock.scanner.parse.StockLevel
 import kotlinx.coroutines.Dispatchers
@@ -42,11 +43,17 @@ data class InventoryView(
     val unpriced: Int = 0,
     /** True when [shown] is sorted lowest stock first (quantity ÷ minimum) instead of grouped by category. */
     val lowestFirst: Boolean = false,
+    /** Overview donut by category: pieces, and value (unpriced parts count as 0), top 6 + the rest. */
+    val overviewPieces: List<OverviewSlice> = emptyList(),
+    val overviewValue: List<OverviewSlice> = emptyList(),
 ) {
     val parts: List<PartRow> get() = data.parts
     val photos: Map<Long, List<String>> get() = data.photos
     val loaded: Boolean get() = data.loaded
 }
+
+/** One Overview donut slice; [category] is null for the merged "Other" slice of the smaller categories. */
+data class OverviewSlice(val label: String, val category: String?, val value: Double, val fraction: Double)
 
 /**
  * Loads parts, photos and locations on [Dispatchers.IO] and reloads them whenever the database changes
@@ -124,7 +131,23 @@ class InventoryViewModel(val db: InventoryDb) : ViewModel() {
             value = parts.sumOf { (it.unitCost ?: 0.0) * it.quantity },
             unpriced = parts.count { it.unitCost == null },
             lowestFirst = f.lowestFirst,
+            overviewPieces = overview(parts.groupBy { it.category }.mapValues { (_, ps) -> ps.sumOf { it.quantity }.toDouble() }),
+            overviewValue = overview(
+                parts.groupBy { it.category }.mapValues { (_, ps) -> ps.sumOf { (it.unitCost ?: 0.0) * it.quantity } },
+            ),
         )
+    }
+
+    /** Top [OVERVIEW_SLICES] categories by [byCategory], in the usual category order for ties, plus the rest. */
+    private fun overview(byCategory: Map<String, Double>): List<OverviewSlice> {
+        val cats = byCategory.keys.sortedBy { c -> Categories.ALL.indexOf(c).let { if (it < 0) 999 else it } }
+        val slices = ChartData.topN(cats, DoubleArray(cats.size) { byCategory.getValue(cats[it]) }, OVERVIEW_SLICES, "Other")
+        // The merged slice is called "Other" unless the real Other category is shown on its own.
+        val merged = if (slices.any { it.index >= 0 && cats[it.index] == Categories.OTHER }) "More categories" else "Other"
+        return slices.map { s ->
+            if (s.index >= 0) OverviewSlice(cats[s.index], cats[s.index], s.value, s.fraction)
+            else OverviewSlice(merged, null, s.value, s.fraction)
+        }
     }
 
     companion object {
@@ -132,5 +155,6 @@ class InventoryViewModel(val db: InventoryDb) : ViewModel() {
 
         /** The single group's header when sorted lowest stock first. */
         const val LOWEST_FIRST = "Lowest stock first"
+        const val OVERVIEW_SLICES = 6
     }
 }

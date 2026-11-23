@@ -25,6 +25,16 @@ class Prefs(context: Context) {
         get() = sp.getString("autoBackupUri", "") ?: ""
         set(v) = sp.edit().putString("autoBackupUri", v).apply()
 
+    /** The Inventory Overview card (category donut) is open; collapsed when false. */
+    var overviewOpen: Boolean
+        get() = sp.getBoolean("overviewOpen", true)
+        set(v) = sp.edit().putBoolean("overviewOpen", v).apply()
+
+    /** The Overview donut shows value (true) or pieces (false). */
+    var overviewByValue: Boolean
+        get() = sp.getBoolean("overviewByValue", false)
+        set(v) = sp.edit().putBoolean("overviewByValue", v).apply()
+
     /** Look the part up on Mouser as soon as the review screen opens (only when a key is saved). */
     var autoMouserLookup: Boolean
         get() = sp.getBoolean("autoMouserLookup", true)
