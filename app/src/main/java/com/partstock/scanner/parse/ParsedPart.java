@@ -40,6 +40,10 @@ public final class ParsedPart {
     public String rawText = "";
     /** Fields taken from a label barcode because OCR missed them or read them differently (see LabelBarcode). */
     public final java.util.Set<String> fromBarcode = new java.util.LinkedHashSet<>();
+    /** Fields where a barcode held the same value OCR read (a cross-check that passed). */
+    public final java.util.Set<String> barcodeAgrees = new java.util.LinkedHashSet<>();
+    /** Field → what OCR read, for fields where a barcode value replaced a different OCR value. */
+    public final java.util.Map<String, String> ocrBeforeBarcode = new java.util.LinkedHashMap<>();
 
     /** Key the sheet matches on: MPN, else customer PN, else distributor PN. */
     public String inventoryKey() {

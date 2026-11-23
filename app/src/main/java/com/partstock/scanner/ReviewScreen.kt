@@ -20,6 +20,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.CameraAlt
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.CloudDone
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -33,27 +37,39 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.partstock.scanner.parse.Categories
 import com.partstock.scanner.parse.FieldReader
+import com.partstock.scanner.parse.FieldStatus
 import com.partstock.scanner.parse.LabelBarcode
 import com.partstock.scanner.parse.Locations
 import com.partstock.scanner.parse.OcrLine
@@ -119,6 +135,13 @@ fun ReviewScreen(
     var rescanMsg by remember { mutableStateOf<String?>(null) }
     var showPhoto by remember { mutableStateOf(false) }
     val thumb = remember(photo) { photo?.asImageBitmap() }
+    // Field → (value, who set it) for values put there by a lookup or a close-up re-read, so the status line can say
+    // where a value came from and notice when it's typed over.
+    val setBy = remember { mutableStateMapOf<String, Pair<String, String>>() }
+    fun mark(field: String, value: String, by: String) {
+        setBy[field] = value to by
+    }
+    val focus = remember { STATUS_FIELDS.associateWith { FocusRequester() } }
 
     fun applyRescan(f: FieldReader.Field, lines: List<OcrLine>) {
         val v = FieldReader.read(f, lines)
@@ -138,6 +161,14 @@ fun ReviewScreen(
                 descriptionFromMouser = false
             }
         }
+        val key = when (f) {
+            FieldReader.Field.MPN -> LabelBarcode.F_MPN
+            FieldReader.Field.DISTRIBUTOR_PN -> LabelBarcode.F_DIST_PN
+            FieldReader.Field.CUSTOMER_PN -> LabelBarcode.F_CUST_PN
+            FieldReader.Field.QUANTITY -> LabelBarcode.F_QTY
+            FieldReader.Field.DESCRIPTION -> F_DESCRIPTION
+        }
+        mark(key, v, FieldStatus.REREAD)
         rescanMsg = "Re-read $name: $v"
     }
 
@@ -211,15 +242,25 @@ fun ReviewScreen(
                     if (r.url.isNotBlank()) apiUrl = r.url
                     if (r.datasheetUrl.isNotBlank()) datasheetUrl = r.datasheetUrl
                     apiSpecs = r.specs
-                    if (part.distributor == ParsedPart.MOUSER && r.mouserPn.isNotBlank()) distributorPn = r.mouserPn
+                    if (part.distributor == ParsedPart.MOUSER && r.mouserPn.isNotBlank()) {
+                        distributorPn = r.mouserPn
+                        mark(LabelBarcode.F_DIST_PN, r.mouserPn, "Mouser")
+                    }
                     if (r.description.isNotBlank()) {
                         description = r.description
                         descriptionFromMouser = true
+                        mark(F_DESCRIPTION, r.description, "Mouser")
                     }
                     if (!categoryPicked) category = Categories.classify(r.category, r.description, description)
-                    if (manufacturer.isBlank() && r.manufacturer.isNotBlank()) manufacturer = r.manufacturer
+                    if (manufacturer.isBlank() && r.manufacturer.isNotBlank()) {
+                        manufacturer = r.manufacturer
+                        mark(F_MANUFACTURER, r.manufacturer, "Mouser")
+                    }
                     // A part number worked out from the label can be off by an OCR slip; Mouser's is exact.
-                    if ((mpn.isBlank() || part.mpnDerived) && r.mpn.isNotBlank()) mpn = r.mpn
+                    if ((mpn.isBlank() || part.mpnDerived) && r.mpn.isNotBlank()) {
+                        mpn = r.mpn
+                        mark(LabelBarcode.F_MPN, r.mpn, "Mouser")
+                    }
                     val base = if (r.unitPrice != null) {
                         "Mouser: ${r.currency} ${InventoryDb.fmtCost(r.unitPrice)} each at ${r.priceAtQty}+"
                     } else {
@@ -287,21 +328,28 @@ fun ReviewScreen(
                     ) {
                         fixed.add("$dpn → ${r.digiKeyPn}")
                         distributorPn = r.digiKeyPn
+                        mark(LabelBarcode.F_DIST_PN, r.digiKeyPn, "DigiKey")
                     } else if (isDigiKeyLabel && dpn.isBlank() && r.digiKeyPn.isNotBlank()) {
                         distributorPn = r.digiKeyPn
+                        mark(LabelBarcode.F_DIST_PN, r.digiKeyPn, "DigiKey")
                     }
                     if (r.description.isNotBlank()) {
                         description = r.description
                         descriptionFromMouser = true
+                        mark(F_DESCRIPTION, r.description, "DigiKey")
                     }
                     if (!categoryPicked) {
                         category = Categories.classify(*(r.categories + listOf(r.description, description)).toTypedArray())
                     }
-                    if (r.manufacturer.isNotBlank()) manufacturer = r.manufacturer
+                    if (r.manufacturer.isNotBlank()) {
+                        manufacturer = r.manufacturer
+                        mark(F_MANUFACTURER, r.manufacturer, "DigiKey")
+                    }
                     if (r.mpn.isNotBlank() && r.mpn != m) {
                         if (m.isNotBlank()) fixed.add("$m → ${r.mpn}")
                         mpn = r.mpn
                     }
+                    if (r.mpn.isNotBlank()) mark(LabelBarcode.F_MPN, r.mpn, "DigiKey")
                     val base = if (r.unitPrice != null) {
                         "DigiKey: ${r.currency} ${InventoryDb.fmtCost(r.unitPrice)} each at ${r.priceAtQty}+"
                     } else {
@@ -375,6 +423,40 @@ fun ReviewScreen(
         }
     }
 
+    // Per-field status and, for a part already in stock, what the save does to each stored value.
+    val current = mapOf(
+        LabelBarcode.F_MPN to mpn, F_DESCRIPTION to description, F_MANUFACTURER to manufacturer,
+        LabelBarcode.F_QTY to qty, LabelBarcode.F_DIST_PN to distributorPn, LabelBarcode.F_CUST_PN to customerPn,
+    )
+    val initial = remember {
+        mapOf(
+            LabelBarcode.F_MPN to part.mpn.orEmpty(), F_DESCRIPTION to part.description.orEmpty(),
+            F_MANUFACTURER to part.manufacturer.orEmpty(), LabelBarcode.F_QTY to part.quantity?.toString().orEmpty(),
+            LabelBarcode.F_DIST_PN to part.distributorPn.orEmpty(), LabelBarcode.F_CUST_PN to part.customerPn.orEmpty(),
+        )
+    }
+    val status = STATUS_FIELDS.associateWith { f ->
+        val by = setBy[f]
+        FieldStatus.of(f, part, current[f], initial[f], by?.first, by?.second)
+    }
+    val row = existing?.row
+    val changes: Map<String, FieldStatus.Change?> = if (row == null) emptyMap() else mapOf(
+        LabelBarcode.F_MPN to FieldStatus.change(row.mpn, mpn, false),
+        // A looked-up description replaces the stored one; a label's only fills a blank one.
+        F_DESCRIPTION to FieldStatus.change(row.description, description, descriptionFromMouser),
+        F_MANUFACTURER to FieldStatus.change(row.manufacturer, manufacturer, false),
+        // "Set" replaces this bin's count; "Add" adds to it, so there's no old value to show.
+        LabelBarcode.F_QTY to if (addMode) null else FieldStatus.change(
+            Locations.qtyIn(row.bins(), Locations.normalize(location.ifBlank { row.location })).toString(), qty, true,
+        ),
+        LabelBarcode.F_DIST_PN to FieldStatus.change(row.distributorPn, distributorPn, false),
+        LabelBarcode.F_CUST_PN to FieldStatus.change(row.customerPn, customerPn, false),
+    )
+    val ordered = STATUS_FIELDS.map { status.getValue(it) }
+    val filled = STATUS_FIELDS.count { current[it].orEmpty().isNotBlank() }
+    val summary = FieldStatus.summary(ordered, filled)
+    val firstCheck = FieldStatus.firstToCheck(ordered)
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -420,20 +502,22 @@ fun ReviewScreen(
                 }
             }
             rescanMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
+            if (summary.isNotBlank()) {
+                StatusSummary(summary, toCheck = firstCheck >= 0) {
+                    if (firstCheck >= 0) focus.getValue(STATUS_FIELDS[firstCheck]).requestFocus()
+                }
+            }
 
             seenBag?.let { DuplicateBagCard(it) }
             StockBanner(existing, hasKey, qty.trim().toIntOrNull(), addMode, location)
 
             Field("Manufacturer part number", mpn, { mpn = it }, mono = true,
-                hint = when {
-                    part.mpnDerived && LabelBarcode.F_MPN in part.fromBarcode ->
-                        "Worked out from the Mouser P/N (from barcode) — check it"
-                    part.mpnDerived -> "Worked out from the Mouser P/N — check it"
-                    LabelBarcode.F_MPN in part.fromBarcode -> FROM_BARCODE
-                    else -> null
-                },
+                status = status.getValue(LabelBarcode.F_MPN), change = changes[LabelBarcode.F_MPN],
+                focus = focus.getValue(LabelBarcode.F_MPN),
                 onRescan = { rescan = FieldReader.Field.MPN })
             Field("Description", description, { description = it }, singleLine = false,
+                status = status.getValue(F_DESCRIPTION), change = changes[F_DESCRIPTION],
+                focus = focus.getValue(F_DESCRIPTION),
                 onRescan = { rescan = FieldReader.Field.DESCRIPTION })
             val specs = remember(description, apiSpecs) { apiSpecs.orElse(PartSpecs.fromDescription(description)) }
             if (!specs.isEmpty || datasheetUrl.isNotBlank()) {
@@ -448,7 +532,9 @@ fun ReviewScreen(
                 category = it
                 categoryPicked = true
             }
-            Field("Manufacturer", manufacturer, { manufacturer = it })
+            Field("Manufacturer", manufacturer, { manufacturer = it },
+                status = status.getValue(F_MANUFACTURER), change = changes[F_MANUFACTURER],
+                focus = focus.getValue(F_MANUFACTURER))
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
@@ -456,14 +542,15 @@ fun ReviewScreen(
                     onValueChange = { v -> qty = v.filter { it.isDigit() } },
                     label = { Text("Quantity") },
                     singleLine = true,
-                    supportingText = if (LabelBarcode.F_QTY in part.fromBarcode) {
-                        { Text(FROM_BARCODE) }
-                    } else {
-                        null
+                    supportingText = statusText(status.getValue(LabelBarcode.F_QTY), changes[LabelBarcode.F_QTY]),
+                    trailingIcon = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            StatusIcon(status.getValue(LabelBarcode.F_QTY))
+                            RescanIcon("quantity") { rescan = FieldReader.Field.QUANTITY }
+                        }
                     },
-                    trailingIcon = { RescanIcon("quantity") { rescan = FieldReader.Field.QUANTITY } },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).focusRequester(focus.getValue(LabelBarcode.F_QTY)),
                 )
                 OutlinedTextField(
                     value = location,
@@ -545,11 +632,13 @@ fun ReviewScreen(
 
             Field(
                 (part.distributor ?: "Distributor") + " part number", distributorPn, { distributorPn = it }, mono = true,
-                hint = if (LabelBarcode.F_DIST_PN in part.fromBarcode) FROM_BARCODE else null,
+                status = status.getValue(LabelBarcode.F_DIST_PN), change = changes[LabelBarcode.F_DIST_PN],
+                focus = focus.getValue(LabelBarcode.F_DIST_PN),
                 onRescan = { rescan = FieldReader.Field.DISTRIBUTOR_PN },
             )
             Field("Customer / Entrust PN", customerPn, { customerPn = it }, mono = true,
-                hint = if (LabelBarcode.F_CUST_PN in part.fromBarcode) FROM_BARCODE else null,
+                status = status.getValue(LabelBarcode.F_CUST_PN), change = changes[LabelBarcode.F_CUST_PN],
+                focus = focus.getValue(LabelBarcode.F_CUST_PN),
                 onRescan = { rescan = FieldReader.Field.CUSTOMER_PN })
             Field("Notes", notes, { notes = it }, singleLine = false)
 
@@ -683,8 +772,89 @@ private fun KitHint(part: ParsedPart, onUse: (Int) -> Unit) {
     }
 }
 
-/** Shown under a field whose value came from the label's barcode rather than OCR. */
-private const val FROM_BARCODE = "From barcode"
+private const val F_DESCRIPTION = "description"
+private const val F_MANUFACTURER = "manufacturer"
+
+/** Fields that get a status line, in screen order (the summary jumps to the first one to check). */
+private val STATUS_FIELDS = listOf(
+    LabelBarcode.F_MPN, F_DESCRIPTION, F_MANUFACTURER, LabelBarcode.F_QTY, LabelBarcode.F_DIST_PN,
+    LabelBarcode.F_CUST_PN,
+)
+
+@Composable
+private fun statusColor(kind: FieldStatus.Kind): Color = when (kind) {
+    FieldStatus.Kind.CONFIRMED, FieldStatus.Kind.LOOKED_UP -> ChartColors.positive()
+    FieldStatus.Kind.CHECK -> ChartColors.warning()
+    FieldStatus.Kind.EDITED -> MaterialTheme.colorScheme.primary
+    FieldStatus.Kind.PLAIN -> MaterialTheme.colorScheme.onSurfaceVariant
+}
+
+private fun statusIcon(kind: FieldStatus.Kind): ImageVector? = when (kind) {
+    FieldStatus.Kind.CONFIRMED -> Icons.Outlined.CheckCircle
+    FieldStatus.Kind.LOOKED_UP -> Icons.Outlined.CloudDone
+    FieldStatus.Kind.CHECK -> Icons.Outlined.ErrorOutline
+    FieldStatus.Kind.EDITED -> Icons.Outlined.Edit
+    FieldStatus.Kind.PLAIN -> null
+}
+
+/** Small icon in the field's trailing area; the supporting line says the same in words, so it isn't read twice. */
+@Composable
+private fun StatusIcon(status: FieldStatus) {
+    val icon = statusIcon(status.kind) ?: return
+    Icon(icon, contentDescription = null, tint = statusColor(status.kind), modifier = Modifier.size(18.dp))
+}
+
+/** Supporting line: the status in words, then "was 40" (struck through) or "saved part keeps …". */
+@Composable
+private fun statusText(status: FieldStatus, change: FieldStatus.Change?): (@Composable () -> Unit)? {
+    if (status.text == null && change == null) return null
+    val color = statusColor(status.kind)
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    return {
+        Text(buildAnnotatedString {
+            status.text?.let { withStyle(SpanStyle(color = color)) { append(it) } }
+            if (change != null) {
+                if (status.text != null) append(" · ")
+                withStyle(SpanStyle(color = muted)) {
+                    if (change.replaces) {
+                        append("was ")
+                        withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) {
+                            append(change.text().removePrefix("was "))
+                        }
+                    } else {
+                        append(change.text())
+                    }
+                }
+            }
+        })
+    }
+}
+
+/** "7 fields · 5 confirmed · 2 to check"; tapping jumps to the first field to check. */
+@Composable
+private fun StatusSummary(text: String, toCheck: Boolean, onClick: () -> Unit) {
+    val kind = if (toCheck) FieldStatus.Kind.CHECK else FieldStatus.Kind.CONFIRMED
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = MaterialTheme.shapes.small,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .then(if (toCheck) Modifier.clickable(role = Role.Button, onClickLabel = "Go to the first field to check", onClick = onClick) else Modifier),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            statusIcon(kind)?.let { Icon(it, contentDescription = null, tint = statusColor(kind), modifier = Modifier.size(20.dp)) }
+            Text(text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            if (toCheck) {
+                Text("Show", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
+}
 
 @Composable
 private fun Field(
@@ -693,9 +863,12 @@ private fun Field(
     onChange: (String) -> Unit,
     singleLine: Boolean = true,
     mono: Boolean = false,
-    hint: String? = null,
+    status: FieldStatus = FieldStatus.NONE,
+    change: FieldStatus.Change? = null,
+    focus: FocusRequester? = null,
     onRescan: (() -> Unit)? = null,
 ) {
+    val icon = statusIcon(status.kind)
     OutlinedTextField(
         value = value,
         onValueChange = onChange,
@@ -703,17 +876,19 @@ private fun Field(
         singleLine = singleLine,
         textStyle = if (mono) MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace)
         else MaterialTheme.typography.bodyLarge,
-        supportingText = if (hint != null) {
-            { Text(hint) }
-        } else {
-            null
-        },
-        trailingIcon = if (onRescan != null) {
-            { RescanIcon(label.lowercase(), onRescan) }
+        supportingText = statusText(status, change),
+        trailingIcon = if (onRescan != null || icon != null) {
+            {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    StatusIcon(status)
+                    if (onRescan != null) RescanIcon(label.lowercase(), onRescan)
+                    else Spacer(Modifier.size(12.dp))
+                }
+            }
         } else {
             null
         },
         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().then(if (focus != null) Modifier.focusRequester(focus) else Modifier),
     )
 }

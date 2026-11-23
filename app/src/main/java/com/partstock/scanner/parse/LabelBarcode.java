@@ -144,10 +144,7 @@ public final class LabelBarcode {
         }
         if (r.distributorPn != null && set(p, F_DIST_PN, p.distributorPn, r.distributorPn)) p.distributorPn = r.distributorPn;
         if (r.customerPn != null && set(p, F_CUST_PN, p.customerPn, r.customerPn)) p.customerPn = r.customerPn;
-        if (r.quantity != null && !r.quantity.equals(p.quantity)) {
-            p.quantity = r.quantity;
-            p.fromBarcode.add(F_QTY);
-        }
+        if (r.quantity != null) setQty(p, r.quantity);
         if (r.purchaseOrder != null) {
             String old = p.purchaseOrder;
             if (set(p, F_PO, old, r.purchaseOrder)) {
@@ -211,10 +208,7 @@ public final class LabelBarcode {
             Matcher q = QTY_1D.matcher(v);
             if (q.matches()) {
                 Integer n = toInt(q.group(1));
-                if (n != null && !n.equals(p.quantity)) {
-                    p.quantity = n;
-                    p.fromBarcode.add(F_QTY);
-                }
+                if (n != null) setQty(p, n);
                 return;
             }
         }
@@ -245,9 +239,28 @@ public final class LabelBarcode {
 
     /** Records the field as from-barcode when the barcode value differs from OCR's; true if it should be taken. */
     private static boolean set(ParsedPart p, String field, String ocr, String code) {
-        if (ocr != null && squash(ocr).equals(squash(code))) return false;
+        if (ocr != null && squash(ocr).equals(squash(code))) {
+            if (!p.fromBarcode.contains(field)) p.barcodeAgrees.add(field);
+            return false;
+        }
         p.fromBarcode.add(field);
+        p.barcodeAgrees.remove(field);
+        if (!blank(ocr) && !p.ocrBeforeBarcode.containsKey(field)) p.ocrBeforeBarcode.put(field, ocr.trim());
         return true;
+    }
+
+    /** The barcode's quantity: confirms OCR's, or replaces it (remembering what OCR read). */
+    private static void setQty(ParsedPart p, Integer n) {
+        if (n.equals(p.quantity)) {
+            if (!p.fromBarcode.contains(F_QTY)) p.barcodeAgrees.add(F_QTY);
+            return;
+        }
+        if (p.quantity != null && !p.ocrBeforeBarcode.containsKey(F_QTY)) {
+            p.ocrBeforeBarcode.put(F_QTY, String.valueOf(p.quantity));
+        }
+        p.quantity = n;
+        p.fromBarcode.add(F_QTY);
+        p.barcodeAgrees.remove(F_QTY);
     }
 
     /** Same text apart from look-alike characters, or within one edit for longer values. */
