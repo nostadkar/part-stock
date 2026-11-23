@@ -239,6 +239,19 @@ fun PartDetails(
                             },
                             style = MaterialTheme.typography.labelMedium,
                         )
+                        part.minQty?.let { m ->
+                            val on = if (part.isLow()) MaterialTheme.colorScheme.onErrorContainer
+                            else MaterialTheme.colorScheme.onPrimaryContainer
+                            StockBar(
+                                part.quantity, m,
+                                Modifier.padding(top = 8.dp, start = 12.dp, end = 12.dp).fillMaxWidth(),
+                                height = 8.dp,
+                                track = on.copy(alpha = 0.15f),
+                                neutral = on.copy(alpha = 0.7f),
+                                tick = on,
+                                animate = animate,
+                            )
+                        }
                     }
                     FilledTonalIconButton(
                         onClick = actions.addOne, enabled = !editing, modifier = Modifier.size(56.dp),

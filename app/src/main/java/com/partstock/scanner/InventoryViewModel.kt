@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.partstock.scanner.parse.Categories
 import com.partstock.scanner.parse.Locations
+import com.partstock.scanner.parse.StockLevel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,7 +30,7 @@ data class InventoryData(
 data class InventoryView(
     val data: InventoryData = InventoryData(),
     val shown: List<PartRow> = emptyList(),
-    /** [shown] grouped by category, in the usual category order. */
+    /** [shown] grouped by category, in the usual category order (one group when sorted by lowest stock). */
     val groups: List<Pair<String, List<PartRow>>> = emptyList(),
     /** Parts per category (of all parts, not just the shown ones). */
     val counts: Map<String, Int> = emptyMap(),
@@ -39,6 +40,8 @@ data class InventoryView(
     val pieces: Int = 0,
     val value: Double = 0.0,
     val unpriced: Int = 0,
+    /** True when [shown] is sorted lowest stock first (quantity ÷ minimum) instead of grouped by category. */
+    val lowestFirst: Boolean = false,
 ) {
     val parts: List<PartRow> get() = data.parts
     val photos: Map<Long, List<String>> get() = data.photos
@@ -62,11 +65,13 @@ class InventoryViewModel(val db: InventoryDb) : ViewModel() {
     val bucket = MutableStateFlow<String?>(null)
     val lowOnly = MutableStateFlow(false)
     val bin = MutableStateFlow<String?>(null)
+    /** Sort "Lowest stock first" instead of grouping by category; kept while the app runs. */
+    val lowestFirst = MutableStateFlow(false)
 
     private val filters = combine(
         query.debounce { if (it.isBlank()) 0L else SEARCH_DEBOUNCE_MS },
-        bucket, lowOnly, bin,
-    ) { q, b, low, bin -> Filters(q, b, low, bin) }
+        bucket, lowOnly, bin, lowestFirst,
+    ) { q, b, low, bin, lowest -> Filters(q, b, low, bin, lowest) }
 
     val view: StateFlow<InventoryView> = combine(data, filters) { d, f -> build(d, f) }
         .flowOn(Dispatchers.Default)
@@ -79,18 +84,35 @@ class InventoryViewModel(val db: InventoryDb) : ViewModel() {
         lowOnly.value = false
     }
 
-    private data class Filters(val query: String, val bucket: String?, val lowOnly: Boolean, val bin: String?)
+    private data class Filters(
+        val query: String,
+        val bucket: String?,
+        val lowOnly: Boolean,
+        val bin: String?,
+        val lowestFirst: Boolean,
+    )
 
     private fun build(d: InventoryData, f: Filters): InventoryView {
         val parts = d.parts
-        val shown = parts.filter { p ->
+        val filtered = parts.filter { p ->
             (f.bucket == null || p.category == f.bucket) && (!f.lowOnly || p.isLow()) &&
                 (f.query.isBlank() || p.matches(f.query)) &&
                 (f.bin == null || Locations.keyOf(p.bins(), f.bin) != null)
         }
         val order = Categories.ALL
-        val groups = shown.groupBy { it.category }.toList()
-            .sortedBy { (c, _) -> order.indexOf(c).let { if (it < 0) 999 else it } }
+        val shown: List<PartRow>
+        val groups: List<Pair<String, List<PartRow>>>
+        if (f.lowestFirst) {
+            // Nearly out first (quantity ÷ minimum), parts without a minimum last; ties by part number.
+            shown = filtered.sortedWith(
+                compareBy<PartRow> { StockLevel.ratio(it.quantity, it.minQty) }.thenBy { it.key().lowercase() },
+            )
+            groups = if (shown.isEmpty()) emptyList() else listOf(LOWEST_FIRST to shown)
+        } else {
+            shown = filtered
+            groups = shown.groupBy { it.category }.toList()
+                .sortedBy { (c, _) -> order.indexOf(c).let { if (it < 0) 999 else it } }
+        }
         return InventoryView(
             data = d,
             shown = shown,
@@ -101,10 +123,14 @@ class InventoryViewModel(val db: InventoryDb) : ViewModel() {
             pieces = parts.sumOf { it.quantity },
             value = parts.sumOf { (it.unitCost ?: 0.0) * it.quantity },
             unpriced = parts.count { it.unitCost == null },
+            lowestFirst = f.lowestFirst,
         )
     }
 
     companion object {
         const val SEARCH_DEBOUNCE_MS = 150L
+
+        /** The single group's header when sorted lowest stock first. */
+        const val LOWEST_FIRST = "Lowest stock first"
     }
 }

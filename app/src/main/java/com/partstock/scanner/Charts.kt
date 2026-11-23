@@ -1,6 +1,8 @@
 package com.partstock.scanner
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -30,6 +32,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.partstock.scanner.parse.ChartData
+import com.partstock.scanner.parse.StockLevel
 
 /*
  * Small chart building blocks drawn on a Compose Canvas (no chart library): a sparkline, a donut and a bar meter.
@@ -74,6 +77,11 @@ object ChartColors {
     @Composable
     @ReadOnlyComposable
     fun positive(): Color = if (isDark()) Color(0xFF81C995) else Color(0xFF1E7B34)
+
+    /** Nearly low: amber that reads on both light and dark surfaces. */
+    @Composable
+    @ReadOnlyComposable
+    fun warning(): Color = if (isDark()) Color(0xFFF0B640) else Color(0xFFB26A00)
 
     /** A loss (−2). */
     @Composable
@@ -248,5 +256,45 @@ fun BarMeter(
             val x = r + (size.width - 2 * r) * (target / top).coerceIn(0.0, 1.0).toFloat()
             drawLine(marker, Offset(x, -2f), Offset(x, size.height + 2f), strokeWidth = 2.dp.toPx())
         }
+    }
+}
+
+/**
+ * A part's stock against its minimum: filled to quantity / (2 × minimum) with a tick at the minimum (the middle).
+ * Neutral normally, amber within 25% above the minimum, red at or below it. Draws nothing without a minimum.
+ * Changes slide to the new fill when animations are on; the first draw doesn't animate (rows scroll in quietly).
+ */
+@Composable
+fun StockBar(
+    quantity: Int,
+    minimum: Int?,
+    modifier: Modifier = Modifier,
+    height: Dp = 4.dp,
+    track: Color = MaterialTheme.colorScheme.surfaceVariant,
+    neutral: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    tick: Color = MaterialTheme.colorScheme.onSurface,
+    animate: Boolean = !rememberReduceMotion(),
+) {
+    if (!StockLevel.tracked(minimum)) return
+    val band = StockLevel.band(quantity, minimum)
+    val color = when (band) {
+        StockLevel.Band.LOW -> MaterialTheme.colorScheme.error
+        StockLevel.Band.NEAR -> ChartColors.warning()
+        else -> neutral
+    }
+    val target = StockLevel.fill(quantity, minimum)
+    val shown by animateFloatAsState(target, if (animate) tween(400) else snap(), label = "stock")
+    val description = StockLevel.describe(quantity, minimum)
+    Canvas(modifier.height(height).semantics { contentDescription = description }) {
+        val r = size.height / 2f
+        drawLine(track, Offset(r, r), Offset(size.width - r, r), strokeWidth = size.height, cap = StrokeCap.Round)
+        val t = shown.coerceIn(0f, 1f)
+        if (t > 0f) {
+            val x = r + (size.width - 2 * r) * t
+            drawLine(color, Offset(r, r), Offset(x, r), strokeWidth = size.height, cap = StrokeCap.Round)
+        }
+        val x = r + (size.width - 2 * r) * StockLevel.TICK
+        val w = maxOf(1.5.dp.toPx(), size.height / 4f)
+        drawLine(tick, Offset(x, -size.height * 0.4f), Offset(x, size.height * 1.4f), strokeWidth = w)
     }
 }

@@ -201,6 +201,7 @@ fun InventoryScreen(
         addOne = ::addOne,
         setBucket = { vm.bucket.value = it },
         toggleLow = { vm.lowOnly.value = !lowOnly },
+        toggleLowestFirst = { vm.lowestFirst.value = !vm.lowestFirst.value },
         clearFilters = {
             vm.bucket.value = null
             vm.lowOnly.value = false

@@ -175,8 +175,11 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   **Photos are not in Android's cloud backup** (that backup stops working past 25 MB, which a few hundred photos would
   pass, and it would take the database backup down with it); a phone-to-phone transfer does include them. Use the zip
   export to keep a copy of the photos.
-- **Low stock**: set an optional *Minimum* on a part's page (pencil). Parts at or below it show their count in red,
-  the *Low stock* chip lists them and the summary line counts them. Export → *Reorder list CSV* lists the parts below
+- **Low stock**: set an optional *Minimum* on a part's page (pencil). Parts at or below it show their count in red
+  with a warning icon, and a thin stock bar under the count fills to quantity ÷ (2 × minimum) with a tick at the
+  minimum (amber within 25% above it, red at or below; a larger one on the part page). *Lowest stock first* (next to
+  the Low stock chip) lists everything by quantity ÷ minimum instead of by category. The *Low stock* chip lists them and the summary line counts
+  them. Export → *Reorder list CSV* lists the parts below
   their minimum with the quantity to order (minimum − on hand, rounded up: exact below 10, then to 5s, 10s, 50s, 100s),
   MPN, last unit price and link. Its first two columns, *Mouser Part Number* and *Quantity*, are what Mouser's BOM tool
   asks for; DigiKey parts have their part number in a separate column.

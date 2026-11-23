@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -28,6 +29,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Inventory2
@@ -75,6 +77,8 @@ class InventoryListActions(
     val addOne: (PartRow) -> Unit,
     val setBucket: (String?) -> Unit,
     val toggleLow: () -> Unit,
+    /** Switches between grouping by category and "Lowest stock first". */
+    val toggleLowestFirst: () -> Unit,
     val clearFilters: () -> Unit,
     val scan: () -> Unit,
 )
@@ -141,7 +145,8 @@ fun InventoryList(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(
-                            categoryIcon(cat), contentDescription = null, tint = MaterialTheme.colorScheme.primary,
+                            if (view.lowestFirst) Icons.AutoMirrored.Filled.Sort else categoryIcon(cat),
+                            contentDescription = null, tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(18.dp),
                         )
                         Text(
@@ -253,6 +258,16 @@ private fun CategoryChips(view: InventoryView, bucket: String?, lowOnly: Boolean
                     onClick = actions.toggleLow,
                     leadingIcon = { Icon(Icons.Filled.Warning, contentDescription = null, modifier = Modifier.size(18.dp)) },
                     label = { Text("Low stock · ${view.lowCount}") },
+                )
+            }
+            item(key = "lowest") {
+                FilterChip(
+                    selected = view.lowestFirst,
+                    onClick = actions.toggleLowestFirst,
+                    leadingIcon = {
+                        Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = null, modifier = Modifier.size(18.dp))
+                    },
+                    label = { Text("Lowest stock first") },
                 )
             }
         }
@@ -381,9 +396,11 @@ private fun PartRowCard(
             Column(horizontalAlignment = Alignment.End) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (p.isLow()) {
-                        Box(
-                            Modifier.padding(end = 6.dp).size(8.dp).clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.error),
+                        // An icon, not just a red dot, so low stock isn't shown by color alone.
+                        Icon(
+                            Icons.Filled.Warning, contentDescription = "Low stock",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(end = 4.dp).size(16.dp),
                         )
                     }
                     QuantityText(
@@ -396,6 +413,7 @@ private fun PartRowCard(
                         "min $m", style = MaterialTheme.typography.labelSmall,
                         color = if (p.isLow()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    StockBar(p.quantity, m, Modifier.padding(top = 3.dp).width(44.dp), animate = animate)
                 }
             }
         }
