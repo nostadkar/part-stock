@@ -434,6 +434,7 @@ private fun CategoryChips(view: InventoryView, bucket: String?, lowOnly: Boolean
 }
 
 /** Swipe right to use one, left to add one; the row springs back and the change can be undone. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PartRowCard(
     part: PartRow,
