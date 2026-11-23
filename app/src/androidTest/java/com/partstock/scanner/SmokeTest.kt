@@ -3,6 +3,7 @@ package com.partstock.scanner
 import android.Manifest
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -13,6 +14,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -125,7 +127,7 @@ class SmokeTest {
         compose.waitForIdle()
         compose.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasText("LM358DR"))
         compose.waitForIdle()
-        compose.onAllNodesWithText("LM358DR").onFirst().performClick()
+        compose.onAllNodesWithText("LM358DR").onFirst().performSemanticsAction(SemanticsActions.OnClick)
         compose.waitForIdle()
         compose.onNodeWithText("Stock over time").assertExists()
         rotate(Configuration.ORIENTATION_PORTRAIT)
@@ -159,7 +161,8 @@ class SmokeTest {
         // The row may be below the Overview card, outside the composed part of the list: scroll to it first.
         compose.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasText(mpn))
         compose.waitForIdle()
-        compose.onAllNodesWithText(mpn).onFirst().performClick()
+        // The first match may be in the Overview's "Most valuable parts" (same part), partly off screen: click by action.
+        compose.onAllNodesWithText(mpn).onFirst().performSemanticsAction(SemanticsActions.OnClick)
         compose.waitForIdle()
         compose.onNodeWithText("Stock over time").assertExists()
         Espresso.pressBack() // part page → Inventory
