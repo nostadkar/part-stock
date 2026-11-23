@@ -93,4 +93,40 @@ public final class Categories {
         }
         return OTHER;
     }
+
+    /**
+     * Categories whose name matches [query] for the picker's search box: every word of the query must start a word
+     * of the name ("cap" → Capacitors, "power reg" → Power ICs & regulators), ignoring case. Blank shows them all.
+     */
+    public static List<String> search(List<String> categories, String query) {
+        String q = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+        if (q.isEmpty()) return new ArrayList<>(categories);
+        String[] want = q.split("[^a-z0-9]+");
+        List<String> out = new ArrayList<>();
+        for (String c : categories) {
+            String[] words = c.toLowerCase(Locale.ROOT).split("[^a-z0-9]+");
+            boolean all = true;
+            for (String w : want) {
+                if (w.isEmpty()) continue;
+                boolean hit = false;
+                for (String cw : words) if (cw.startsWith(w)) { hit = true; break; }
+                if (!hit) { all = false; break; }
+            }
+            if (all) out.add(c);
+        }
+        return out;
+    }
+
+    /**
+     * The filter chips shown before a "More…" chip: the first [max] of [categories], keeping [selected] visible
+     * (it replaces the last one when it would be hidden). All of them when they fit.
+     */
+    public static List<String> chipsBeforeMore(List<String> categories, String selected, int max) {
+        if (categories.size() <= max) return new ArrayList<>(categories);
+        List<String> out = new ArrayList<>(categories.subList(0, Math.max(0, max)));
+        if (selected != null && categories.contains(selected) && !out.contains(selected) && !out.isEmpty()) {
+            out.set(out.size() - 1, selected);
+        }
+        return out;
+    }
 }

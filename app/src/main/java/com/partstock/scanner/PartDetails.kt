@@ -223,7 +223,7 @@ fun PartDetails(
                     description, { description = it }, label = { Text("Description") },
                     keyboardOptions = textKeys(), modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
                 )
-                CategoryPicker(category) { category = it }
+                CategoryPicker(category, description = description) { category = it }
             } else if (part.description.isNotBlank()) {
                 Text(part.description, style = MaterialTheme.typography.bodyLarge)
             }

@@ -466,6 +466,22 @@ private fun StatTile(
 @Composable
 private fun CategoryChips(view: InventoryView, bucket: String?, lowOnly: Boolean, actions: InventoryListActions) {
     val cats = Categories.ALL.filter { view.counts.containsKey(it) }
+    // Many categories: a few chips, then "More…" opens the same tile sheet as the category picker.
+    val chips = Categories.chipsBeforeMore(cats, bucket, CHIPS_BEFORE_MORE)
+    var more by remember { mutableStateOf(false) }
+    if (more) {
+        CategorySheet(
+            title = "Show category",
+            categories = cats,
+            selected = bucket,
+            counts = view.counts,
+            onPick = {
+                more = false
+                actions.setBucket(if (bucket == it) null else it)
+            },
+            onDismiss = { more = false },
+        )
+    }
     LazyRow(
         contentPadding = PaddingValues(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -488,7 +504,7 @@ private fun CategoryChips(view: InventoryView, bucket: String?, lowOnly: Boolean
                 )
             }
         }
-        items(cats, key = { it }) { c ->
+        items(chips, key = { it }) { c ->
             FilterChip(
                 selected = bucket == c,
                 onClick = { actions.setBucket(if (bucket == c) null else c) },
@@ -496,8 +512,20 @@ private fun CategoryChips(view: InventoryView, bucket: String?, lowOnly: Boolean
                 label = { Text("$c · ${view.counts[c]}", maxLines = 1) },
             )
         }
+        if (chips.size < cats.size) {
+            item(key = "more") {
+                FilterChip(
+                    selected = false,
+                    onClick = { more = true },
+                    label = { Text("More… · ${cats.size - chips.size}") },
+                )
+            }
+        }
     }
 }
+
+/** Category chips shown before "More…" when there are more categories than fit comfortably. */
+private const val CHIPS_BEFORE_MORE = 6
 
 /** Swipe right to use one, left to add one; the row springs back and the change can be undone. */
 @OptIn(ExperimentalFoundationApi::class)

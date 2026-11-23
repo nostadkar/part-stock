@@ -548,7 +548,7 @@ fun ReviewScreen(
                     }
                 }
             }
-            CategoryPicker(category) {
+            CategoryPicker(category, description = listOf(description, notes).joinToString(" ")) {
                 category = it
                 categoryPicked = true
             }
