@@ -87,6 +87,7 @@ import com.partstock.scanner.parse.LabelBarcode
 import com.partstock.scanner.parse.LabelCodes
 import com.partstock.scanner.parse.Locations
 import com.partstock.scanner.parse.LabelParser
+import com.partstock.scanner.parse.OcrLine
 import com.partstock.scanner.parse.ParsedPart
 import com.partstock.scanner.parse.ScanMerger
 
@@ -119,7 +120,13 @@ class MainActivity : ComponentActivity() {
 private sealed interface Screen {
     data object Scan : Screen
     /** [photo] is one of the photos that was read, shown on the review screen to compare against. */
-    data class Review(val part: ParsedPart, val photo: Bitmap? = null, val batchId: String? = null) : Screen
+    data class Review(
+        val part: ParsedPart,
+        val photo: Bitmap? = null,
+        val batchId: String? = null,
+        /** The photo's OCR lines as size-independent boxes (PhotoBoxes), drawn over it on the review screen. */
+        val boxes: List<OcrLine> = emptyList(),
+    ) : Screen
     /** [bin] = show only the parts in that bin (opened from the Locations screen). */
     data class Inventory(val bin: String? = null, val openPart: Long? = null) : Screen
     data object Locations : Screen
@@ -252,7 +259,7 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
     fun reviewBatch(card: BatchCard) {
         scope.launch {
             val photo = withContext(Dispatchers.IO) { batch.photo(card.item) }
-            screen = Screen.Review(card.part, photo, batchId = card.item.id)
+            screen = Screen.Review(card.part, photo, batchId = card.item.id, boxes = card.item.photoBoxes)
         }
     }
 
@@ -331,7 +338,7 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
             onSettings = { screen = Screen.Settings },
             // Always read barcodes so the app's own QR labels work; label barcodes only count when that's on.
             readBarcodes = true,
-            onFrames = { frames, photo, codes ->
+            onFrames = { frames, photo, codes, boxes ->
                 val own = LabelCodes.first(codes)
                 if (own != null && own.isPart()) {
                     if (inventory.parts.any { it.id == own.partId }) screen = Screen.Inventory(openPart = own.partId)
@@ -346,13 +353,13 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
                 } else if (batchMode) {
                     val labelCodes = if (prefs.readBarcodes) codes.filterNot { LabelCodes.isOurs(it) } else emptyList()
                     if (frames.all { f -> f.all { it.text.isBlank() } }) toast("No text found. Move closer and avoid glare.")
-                    else batch.add(frames, photo, labelCodes)
+                    else batch.add(frames, photo, labelCodes, boxes)
                 } else {
                     // Barcodes are read exactly: where one disagrees with OCR, the barcode wins.
                     val labelCodes = if (prefs.readBarcodes) codes.filterNot { LabelCodes.isOurs(it) } else emptyList()
                     val part = LabelBarcode.apply(ScanMerger.merge(frames.map { LabelParser.parse(it) }), labelCodes)
                     if (part.rawText.isBlank()) toast("No text found. Move closer and avoid glare.")
-                    else screen = Screen.Review(part, photo)
+                    else screen = Screen.Review(part, photo, boxes = boxes)
                 }
             },
             onError = ::toast,
@@ -388,6 +395,7 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
                 ReviewScreen(
                     part = s.part,
                     photo = s.photo,
+                    photoBoxes = s.boxes,
                     db = db,
                     prefs = prefs,
                     secrets = secrets,

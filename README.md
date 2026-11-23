@@ -127,6 +127,11 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   so you can compare. Each of MPN, description, quantity, distributor PN and customer PN has a small camera icon: frame
   just that part of the label in the box and tap the shutter. Only the text inside the box is used, cleaned like a
   full scan (field names dropped, split part numbers joined, O/0 slips in quantities fixed), and only that field changes.
+- **Boxes on the photo**: the review screen shows the photo that was read (about 40% of the screen; ▴ hides it, the
+  magnifier opens it full screen) with a box around every line OCR found. Lines a field came from are drawn in that
+  field's color with a tag (*MPN*, *Qty*, *Desc*, *Cust PN*, *Dist PN*); the rest are faint. Tap a line → *Use this line
+  as* a field (read the same way as the rescan above, no new photo). Tapping into a field makes its line bolder. Bags
+  queued in batch mode before this version show the photo without boxes.
 - **Add to stock** adds the quantity; **Set count to this** overwrites it (use after a recount). Both apply to the bin
   on the review screen (the part's main bin if it's blank), so Set on a part kept in two bins only resets that bin.
 - **Bin / location** is remembered for the next scan, handy when filling one drawer at a time.

@@ -53,6 +53,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -73,6 +74,7 @@ import com.partstock.scanner.parse.FieldStatus
 import com.partstock.scanner.parse.LabelBarcode
 import com.partstock.scanner.parse.Locations
 import com.partstock.scanner.parse.OcrLine
+import com.partstock.scanner.parse.PhotoBoxes
 import com.partstock.scanner.parse.Links
 import com.partstock.scanner.parse.ParsedPart
 import com.partstock.scanner.parse.PartNumberVariants
@@ -87,6 +89,8 @@ fun ReviewScreen(
     part: ParsedPart,
     /** One of the photos that was read, to compare the fields against; null for older callers. */
     photo: Bitmap? = null,
+    /** That photo's OCR lines as size-independent boxes (PhotoBoxes), drawn over it; empty = just the photo. */
+    photoBoxes: List<OcrLine> = emptyList(),
     db: InventoryDb,
     prefs: Prefs,
     secrets: SecretStore,
@@ -134,6 +138,11 @@ fun ReviewScreen(
     var rescan by remember { mutableStateOf<FieldReader.Field?>(null) }
     var rescanMsg by remember { mutableStateOf<String?>(null) }
     var showPhoto by remember { mutableStateOf(false) }
+    // The field being edited: its source line is highlighted on the photo.
+    var focusedField by remember { mutableStateOf<FieldReader.Field?>(null) }
+    fun focusChanged(f: FieldReader.Field, focused: Boolean) {
+        if (focused) focusedField = f else if (focusedField == f) focusedField = null
+    }
     val thumb = remember(photo) { photo?.asImageBitmap() }
     // Field → (value, who set it) for values put there by a lookup or a close-up re-read, so the status line can say
     // where a value came from and notice when it's typed over.
@@ -143,12 +152,14 @@ fun ReviewScreen(
     }
     val focus = remember { STATUS_FIELDS.associateWith { FocusRequester() } }
 
-    fun applyRescan(f: FieldReader.Field, lines: List<OcrLine>) {
+    /** Fills [f] from [lines] read off a close-up, or ([fromPhoto]) from a line tapped on the review photo. */
+    fun applyRescan(f: FieldReader.Field, lines: List<OcrLine>, fromPhoto: Boolean = false) {
         val v = FieldReader.read(f, lines)
         val name = FieldReader.label(f)
+        val saw = lines.joinToString(" ") { it.text }.take(60)
         if (v == null) {
-            rescanMsg = "Couldn't read a $name there (saw \"${lines.joinToString(" ") { it.text }.take(60)}\"). " +
-                "Tap the camera icon to try again, or type it."
+            rescanMsg = if (fromPhoto) "That line doesn't look like a $name (\"$saw\"). Pick another line, or type it."
+            else "Couldn't read a $name there (saw \"$saw\"). Tap the camera icon to try again, or type it."
             return
         }
         when (f) {
@@ -169,7 +180,7 @@ fun ReviewScreen(
             FieldReader.Field.DESCRIPTION -> F_DESCRIPTION
         }
         mark(key, v, FieldStatus.REREAD)
-        rescanMsg = "Re-read $name: $v"
+        rescanMsg = if (fromPhoto) "Took the $name from the photo: $v" else "Re-read $name: $v"
     }
 
     // Check whether this part is already in stock; re-checks as the part numbers are edited.
@@ -487,19 +498,25 @@ fun ReviewScreen(
             }
 
             if (thumb != null) {
-                Column(Modifier.fillMaxWidth().clickable { showPhoto = true }) {
-                    Image(
-                        thumb,
-                        contentDescription = "Photo that was read",
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp),
-                    )
-                    Text(
-                        "Photo that was read · tap to zoom",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                // Which line each field's value came from, kept up to date as fields change.
+                val sources = remember(photoBoxes, mpn, distributorPn, customerPn, description, qty) {
+                    PhotoBoxes.sources(
+                        photoBoxes,
+                        mapOf(
+                            FieldReader.Field.MPN to mpn, FieldReader.Field.DISTRIBUTOR_PN to distributorPn,
+                            FieldReader.Field.CUSTOMER_PN to customerPn, FieldReader.Field.DESCRIPTION to description,
+                            FieldReader.Field.QUANTITY to qty,
+                        ),
                     )
                 }
+                ReviewPhotoPanel(
+                    photo = thumb,
+                    boxes = photoBoxes,
+                    sources = sources,
+                    highlight = focusedField,
+                    onUseLine = { i, f -> photoBoxes.getOrNull(i)?.let { applyRescan(f, listOf(it), fromPhoto = true) } },
+                    onZoom = { showPhoto = true },
+                )
             }
             rescanMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
             if (summary.isNotBlank()) {
@@ -512,10 +529,12 @@ fun ReviewScreen(
             StockBanner(existing, hasKey, qty.trim().toIntOrNull(), addMode, location)
 
             Field("Manufacturer part number", mpn, { mpn = it }, mono = true,
+                onFocus = { focusChanged(FieldReader.Field.MPN, it) },
                 status = status.getValue(LabelBarcode.F_MPN), change = changes[LabelBarcode.F_MPN],
                 focus = focus.getValue(LabelBarcode.F_MPN),
                 onRescan = { rescan = FieldReader.Field.MPN })
             Field("Description", description, { description = it }, singleLine = false,
+                onFocus = { focusChanged(FieldReader.Field.DESCRIPTION, it) },
                 status = status.getValue(F_DESCRIPTION), change = changes[F_DESCRIPTION],
                 focus = focus.getValue(F_DESCRIPTION),
                 onRescan = { rescan = FieldReader.Field.DESCRIPTION })
@@ -550,7 +569,8 @@ fun ReviewScreen(
                         }
                     },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.weight(1f).focusRequester(focus.getValue(LabelBarcode.F_QTY)),
+                    modifier = Modifier.weight(1f).focusRequester(focus.getValue(LabelBarcode.F_QTY))
+                        .onFocusChanged { focusChanged(FieldReader.Field.QUANTITY, it.isFocused) },
                 )
                 OutlinedTextField(
                     value = location,
@@ -632,11 +652,13 @@ fun ReviewScreen(
 
             Field(
                 (part.distributor ?: "Distributor") + " part number", distributorPn, { distributorPn = it }, mono = true,
+                onFocus = { focusChanged(FieldReader.Field.DISTRIBUTOR_PN, it) },
                 status = status.getValue(LabelBarcode.F_DIST_PN), change = changes[LabelBarcode.F_DIST_PN],
                 focus = focus.getValue(LabelBarcode.F_DIST_PN),
                 onRescan = { rescan = FieldReader.Field.DISTRIBUTOR_PN },
             )
             Field("Customer / Entrust PN", customerPn, { customerPn = it }, mono = true,
+                onFocus = { focusChanged(FieldReader.Field.CUSTOMER_PN, it) },
                 status = status.getValue(LabelBarcode.F_CUST_PN), change = changes[LabelBarcode.F_CUST_PN],
                 focus = focus.getValue(LabelBarcode.F_CUST_PN),
                 onRescan = { rescan = FieldReader.Field.CUSTOMER_PN })
@@ -867,6 +889,8 @@ private fun Field(
     change: FieldStatus.Change? = null,
     focus: FocusRequester? = null,
     onRescan: (() -> Unit)? = null,
+    /** Told when the field gains or loses focus (to highlight its line on the photo). */
+    onFocus: ((Boolean) -> Unit)? = null,
 ) {
     val icon = statusIcon(status.kind)
     OutlinedTextField(
@@ -889,6 +913,8 @@ private fun Field(
             null
         },
         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
-        modifier = Modifier.fillMaxWidth().then(if (focus != null) Modifier.focusRequester(focus) else Modifier),
+        modifier = Modifier.fillMaxWidth()
+            .then(if (focus != null) Modifier.focusRequester(focus) else Modifier)
+            .then(if (onFocus != null) Modifier.onFocusChanged { onFocus(it.isFocused) } else Modifier),
     )
 }

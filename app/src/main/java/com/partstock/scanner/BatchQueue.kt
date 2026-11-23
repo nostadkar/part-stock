@@ -50,6 +50,8 @@ data class BatchItem(
     val found: LookupFound? = null,
     /** This bag's fingerprint is in the scan log already (checked when queued and again before saving). */
     val savedBefore: Boolean = false,
+    /** The photo's OCR lines as size-independent boxes, for the review screen (none for bags queued before). */
+    val photoBoxes: List<OcrLine> = emptyList(),
 ) {
     /** Parsed once per bag (status changes copy the item but never its OCR lines). */
     val part: ParsedPart get() = BatchQueue.partOf(this)
@@ -171,6 +173,11 @@ object BatchQueue {
                 for (l in frame) put(JSONArray().put(l.text).put(l.left).put(l.top).put(l.right).put(l.bottom))
             })
         })
+        if (i.photoBoxes.isNotEmpty()) {
+            put("photoBoxes", JSONArray().apply {
+                for (l in i.photoBoxes) put(JSONArray().put(l.text).put(l.left).put(l.top).put(l.right).put(l.bottom))
+            })
+        }
         i.found?.let { f ->
             put("found", JSONObject().apply {
                 put("source", f.source); put("mpn", f.mpn); put("description", f.description)
@@ -194,6 +201,11 @@ object BatchQueue {
                 OcrLine(a.optString(0), a.optInt(1), a.optInt(2), a.optInt(3), a.optInt(4))
             }
         }
+        val boxesJson = o.optJSONArray("photoBoxes") ?: JSONArray()
+        val boxes = (0 until boxesJson.length()).mapNotNull { li ->
+            val a = boxesJson.optJSONArray(li) ?: return@mapNotNull null
+            OcrLine(a.optString(0), a.optInt(1), a.optInt(2), a.optInt(3), a.optInt(4))
+        }
         val found = o.optJSONObject("found")?.let { f ->
             val s = f.optJSONArray("specs").strings()
             LookupFound(
@@ -209,7 +221,7 @@ object BatchQueue {
             id = o.optString("id").ifBlank { return null }, createdAt = o.optLong("createdAt"),
             frames = frames, codes = o.optJSONArray("codes").strings(), photoFile = o.optString("photo"),
             lookup = o.optString("lookup", BatchRules.LOOKUP_PENDING), lookupNote = o.optString("note"),
-            found = found, savedBefore = o.optBoolean("savedBefore"),
+            found = found, savedBefore = o.optBoolean("savedBefore"), photoBoxes = boxes,
         )
     }
 }
@@ -263,7 +275,7 @@ class BatchViewModel(
         (p.distributor == ParsedPart.DIGIKEY && secrets.hasDigiKey()) || (secrets.hasMouserKey() && prefs.autoMouserLookup)
 
     /** Queues a scanned bag; parsing, the duplicate check and the photo file happen off the main thread. */
-    fun add(frames: List<List<OcrLine>>, photo: Bitmap?, codes: List<String>) {
+    fun add(frames: List<List<OcrLine>>, photo: Bitmap?, codes: List<String>, photoBoxes: List<OcrLine> = emptyList()) {
         viewModelScope.launch(Dispatchers.IO) {
             val photoFile = photo?.let {
                 try {
@@ -275,6 +287,7 @@ class BatchViewModel(
             val draft = BatchItem(
                 id = UUID.randomUUID().toString(), createdAt = System.currentTimeMillis(),
                 frames = frames, codes = codes, photoFile = photoFile, lookup = BatchRules.LOOKUP_PENDING,
+                photoBoxes = if (photoFile.isNotEmpty()) photoBoxes else emptyList(),
             )
             val p = draft.part
             val item = draft.copy(

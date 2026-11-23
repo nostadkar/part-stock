@@ -87,6 +87,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.mlkit.vision.common.InputImage
 import com.partstock.scanner.parse.OcrLine
+import com.partstock.scanner.parse.PhotoBoxes
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -98,9 +99,10 @@ fun ScanScreen(
     onSettings: () -> Unit,
     /**
      * One list of OCR lines per photo (the camera sends a short burst; a picked photo sends one), plus one of the
-     * photos so the review screen can show what was read, plus the raw values of any barcodes found on them.
+     * photos so the review screen can show what was read, plus the raw values of any barcodes found on them, plus that
+     * photo's lines as size-independent boxes (PhotoBoxes; empty when they can't be placed on it).
      */
-    onFrames: (List<List<OcrLine>>, Bitmap?, List<String>) -> Unit,
+    onFrames: (List<List<OcrLine>>, Bitmap?, List<String>, List<OcrLine>) -> Unit,
     /** Read the label's barcodes too (Settings → Read label barcodes). */
     readBarcodes: Boolean = true,
     onError: (String) -> Unit,
@@ -147,7 +149,15 @@ fun ScanScreen(
                     val input = InputImage.fromFilePath(context, uri)
                     val lines = OcrEngine.recognize(input)
                     val codes = if (readBarcodes) BarcodeEngine.scan(input) else emptyList()
-                    onFrames(listOf(lines), loadPhoto(context, uri), codes)
+                    val photo = loadPhoto(context, uri)
+                    // OCR boxes are upright; the review screen draws them only if the photo came out upright too.
+                    val sideways = input.rotationDegrees % 180 != 0
+                    val w = if (sideways) input.height else input.width
+                    val h = if (sideways) input.width else input.height
+                    val boxes = if (photo != null && PhotoBoxes.sameOrientation(w, h, photo.width, photo.height)) {
+                        PhotoBoxes.normalize(lines, w, h)
+                    } else emptyList()
+                    onFrames(listOf(lines), photo, codes, boxes)
                 } catch (e: Exception) {
                     onError("Couldn't read photo: ${e.message}")
                 } finally {
@@ -170,6 +180,7 @@ fun ScanScreen(
                 // Read a short burst and let the frames vote on each field, so one slip doesn't stick.
                 val frames = mutableListOf<List<OcrLine>>()
                 var photo: Bitmap? = null
+                var boxes: List<OcrLine> = emptyList()
                 val codes = mutableListOf<String>()
                 for (i in 1..BURST_FRAMES) {
                     progress = "Reading $i/$BURST_FRAMES… hold still"
@@ -180,14 +191,17 @@ fun ScanScreen(
                     )
                     frames.add(f.lines)
                     codes.addAll(f.codes)
-                    if (f.photo != null) photo = f.photo
+                    if (f.photo != null) {
+                        photo = f.photo
+                        boxes = PhotoBoxes.normalize(f.lines, f.width, f.height)
+                    }
                     burstStep = i
                 }
                 // Flash green (something was read) or amber (nothing) briefly before moving on.
                 val readSomething = codes.isNotEmpty() || frames.any { it.isNotEmpty() }
                 flash = if (readSomething) GuideFlash.READ_OK else GuideFlash.NOTHING_READ
                 delay(GUIDE_FLASH_MS)
-                onFrames(frames, photo, codes)
+                onFrames(frames, photo, codes, boxes)
             } catch (e: Exception) {
                 flash = GuideFlash.NOTHING_READ
                 onError("Capture failed: ${e.message}")
