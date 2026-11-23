@@ -125,6 +125,9 @@ fun InventoryScreen(
     val barState = rememberTopAppBarState()
     val focus = remember { FocusRequester() }
     val datasheets = rememberDatasheetOpener(db, secrets)
+    // "$?" on unpriced rows only when a price could be looked up or some parts already have one.
+    val hasPriceKey = remember { secrets.getMouserKey() != null || secrets.getDigiKey() != null }
+    val unpricedBadge = hasPriceKey || view.unpriced < view.parts.size
 
     fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
 
@@ -220,6 +223,7 @@ fun InventoryScreen(
         clearFilters = {
             vm.bucket.value = null
             vm.lowOnly.value = false
+            vm.unpricedOnly.value = false
             if (query.isNotEmpty()) setQuery("")
         },
         scan = onScan,
@@ -227,6 +231,7 @@ fun InventoryScreen(
             overviewOpen = !overviewOpen
             prefs?.overviewOpen = overviewOpen
         },
+        toggleUnpriced = { vm.unpricedOnly.value = !vm.unpricedOnly.value },
         setOverviewByValue = { v ->
             overviewByValue = v
             prefs?.overviewByValue = v
@@ -439,6 +444,7 @@ fun InventoryScreen(
                 overviewOpen = overviewOpen,
                 overviewByValue = overviewByValue,
                 sideBySide = landscape && !twoPane,
+                unpricedBadge = unpricedBadge,
                 modifier = Modifier.padding(top = padding.calculateTopPadding()),
                 header = {
                     if (bin != null) {

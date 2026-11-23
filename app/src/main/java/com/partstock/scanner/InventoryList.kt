@@ -57,6 +57,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -85,6 +88,8 @@ class InventoryListActions(
     val toggleOverview: () -> Unit = {},
     /** Overview donut by value (true) or pieces. */
     val setOverviewByValue: (Boolean) -> Unit = {},
+    /** Shows only parts without a price (the Value tile's "unpriced" count), or all again. */
+    val toggleUnpriced: () -> Unit = {},
 )
 
 /** The inventory list: stat tiles, category chips, sticky category headers and swipeable part rows. */
@@ -107,6 +112,8 @@ fun InventoryList(
     overviewByValue: Boolean = false,
     /** Wide and short (a phone in landscape): stat tiles and the Overview card share one row. */
     sideBySide: Boolean = false,
+    /** Mark unpriced rows with "$?" (off when there's nothing to price them with and no part has a price). */
+    unpricedBadge: Boolean = false,
 ) {
     val context = LocalContext.current
     LazyColumn(
@@ -122,18 +129,21 @@ fun InventoryList(
                     Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    StatTiles(view, lowOnly, onLow = actions.toggleLow, modifier = Modifier.weight(1f))
+                    StatTiles(view, lowOnly, onLow = actions.toggleLow, onUnpriced = actions.toggleUnpriced, modifier = Modifier.weight(1f))
                     OverviewCard(
                         view = view, bucket = bucket, open = overviewOpen, byValue = overviewByValue,
                         onToggleOpen = actions.toggleOverview, onByValue = actions.setOverviewByValue,
-                        onCategory = actions.setBucket,
+                        onCategory = actions.setBucket, onPart = actions.open,
                         modifier = Modifier.weight(1f),
                     )
                 }
             }
         } else {
             item(key = "stats") {
-                StatTiles(view, lowOnly, onLow = actions.toggleLow, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                StatTiles(
+                    view, lowOnly, onLow = actions.toggleLow, onUnpriced = actions.toggleUnpriced,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
             }
         }
         if (withOverview && !sideBySide) {
@@ -141,7 +151,7 @@ fun InventoryList(
                 OverviewCard(
                     view = view, bucket = bucket, open = overviewOpen, byValue = overviewByValue,
                     onToggleOpen = actions.toggleOverview, onByValue = actions.setOverviewByValue,
-                    onCategory = actions.setBucket,
+                    onCategory = actions.setBucket, onPart = actions.open,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 )
             }
@@ -212,6 +222,7 @@ fun InventoryList(
                         animate = animate,
                         onClick = { actions.open(p) },
                         datasheets = datasheets,
+                        unpricedBadge = unpricedBadge,
                     )
                 }
             }
@@ -221,13 +232,25 @@ fun InventoryList(
 }
 
 @Composable
-private fun StatTiles(view: InventoryView, lowOnly: Boolean, onLow: () -> Unit, modifier: Modifier = Modifier) {
+private fun StatTiles(
+    view: InventoryView,
+    lowOnly: Boolean,
+    onLow: () -> Unit,
+    onUnpriced: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val priced = view.parts.size - view.unpriced
     Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         StatTile("Parts", view.parts.size.toString(), Modifier.weight(1f))
         StatTile("Pieces", view.pieces.toString(), Modifier.weight(1f))
+        // With parts missing a price, the tile says how many and tapping it lists them.
+        val unpriced = view.unpriced
         StatTile(
             "Value", if (priced > 0) "\$" + InventoryDb.fmtMoney(view.value) else "–", Modifier.weight(1f),
+            selected = view.unpricedOnly,
+            onClick = if (unpriced > 0 || view.unpricedOnly) onUnpriced else null,
+            chip = if (unpriced > 0) "$unpriced unpriced" else null,
+            clickLabel = if (view.unpricedOnly) "Show all parts" else "Show the $unpriced parts without a price",
         )
         StatTile(
             "Low stock", view.lowCount.toString(), Modifier.weight(1f),
@@ -244,6 +267,9 @@ private fun StatTile(
     highlight: Boolean = false,
     selected: Boolean = false,
     onClick: (() -> Unit)? = null,
+    /** Small pill under the label ("3 unpriced"). */
+    chip: String? = null,
+    clickLabel: String? = null,
 ) {
     val container = when {
         selected -> MaterialTheme.colorScheme.errorContainer
@@ -257,7 +283,9 @@ private fun StatTile(
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = container,
-        modifier = modifier.clip(RoundedCornerShape(16.dp)).let { if (onClick != null) it.clickable(onClick = onClick) else it },
+        modifier = modifier.clip(RoundedCornerShape(16.dp)).let {
+            if (onClick != null) it.clickable(onClickLabel = clickLabel, role = Role.Button, onClick = onClick) else it
+        },
     ) {
         Column(Modifier.padding(horizontal = 10.dp, vertical = 10.dp)) {
             Text(
@@ -268,6 +296,20 @@ private fun StatTile(
                 label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
+            if (chip != null) {
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = if (selected) MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.15f)
+                    else MaterialTheme.colorScheme.tertiaryContainer,
+                    modifier = Modifier.padding(top = 4.dp),
+                ) {
+                    Text(
+                        chip, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        color = if (selected) content else MaterialTheme.colorScheme.onTertiaryContainer,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                }
+            }
         }
     }
 }
@@ -282,7 +324,7 @@ private fun CategoryChips(view: InventoryView, bucket: String?, lowOnly: Boolean
     ) {
         item(key = "all") {
             FilterChip(
-                selected = bucket == null && !lowOnly,
+                selected = bucket == null && !lowOnly && !view.unpricedOnly,
                 onClick = actions.clearFilters,
                 label = { Text("All · ${view.parts.size}") },
             )
@@ -378,6 +420,7 @@ private fun PartRowCard(
     animate: Boolean,
     onClick: () -> Unit,
     datasheets: DatasheetOpener,
+    unpricedBadge: Boolean = false,
 ) {
     val p = part
     val mark = MaterialTheme.colorScheme.tertiaryContainer
@@ -442,6 +485,13 @@ private fun PartRowCard(
                     QuantityText(
                         p.quantity, animate,
                         color = if (p.isLow()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+                if (unpricedBadge && p.unitCost == null) {
+                    Text(
+                        "\$?", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.semantics { contentDescription = "No price" },
                     )
                 }
                 p.minQty?.let { m ->

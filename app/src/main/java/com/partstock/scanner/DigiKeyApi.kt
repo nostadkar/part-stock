@@ -207,6 +207,15 @@ object DigiKeyApi {
                 priceQty = b.optInt("BreakQuantity")
             }
         }
+        if (pricing != null && pricing.length() > 0) {
+            val table = PriceTable.of(
+                (0 until pricing.length()).mapNotNull { pricing.optJSONObject(it) }.map {
+                    it.optInt("BreakQuantity", 0) to it.optDouble("UnitPrice").takeIf { d -> !d.isNaN() }
+                },
+                "USD", "DigiKey",
+            )
+            PriceTables.put(listOf(variation?.optString("DigiKeyProductNumber").orEmpty(), p.optString("ManufacturerProductNumber")), table)
+        }
         if (price == null) {
             price = p.optDouble("UnitPrice").takeIf { !it.isNaN() && it > 0 }
             priceQty = if (price != null) 1 else null

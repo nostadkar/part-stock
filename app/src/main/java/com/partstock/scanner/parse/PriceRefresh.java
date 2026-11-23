@@ -49,6 +49,42 @@ public final class PriceRefresh {
         return "Price from " + source.trim() + ", " + d.format(DateTimeFormatter.ofPattern(pattern, Locale.US));
     }
 
+    /** How old a looked-up price is, for the part page's freshness chip. */
+    public enum Freshness { FRESH, AGING, OLD, NEVER }
+
+    /** Days after which a price is "30+ days old" and "90+ days old". */
+    public static final int AGING_DAYS = 30, OLD_DAYS = 90;
+
+    /**
+     * NEVER when the price wasn't looked up (no source or stamp, e.g. typed in or none), otherwise by age:
+     * under 30 days FRESH, under 90 AGING, else OLD. An unreadable stamp counts as OLD.
+     */
+    public static Freshness freshness(String source, String checkedAt, LocalDate today) {
+        if (source == null || source.trim().isEmpty() || checkedAt == null || checkedAt.trim().isEmpty()) {
+            return Freshness.NEVER;
+        }
+        LocalDate d;
+        try {
+            d = LocalDateTime.parse(checkedAt.trim(), STAMP).toLocalDate();
+        } catch (DateTimeParseException e) {
+            return Freshness.OLD;
+        }
+        long days = java.time.temporal.ChronoUnit.DAYS.between(d, today);
+        if (days < AGING_DAYS) return Freshness.FRESH;
+        if (days < OLD_DAYS) return Freshness.AGING;
+        return Freshness.OLD;
+    }
+
+    /** Chip text: "Fresh", "30+ days old", "90+ days old", "Never checked". */
+    public static String freshnessText(Freshness f) {
+        switch (f) {
+            case FRESH: return "Fresh";
+            case AGING: return AGING_DAYS + "+ days old";
+            case OLD: return OLD_DAYS + "+ days old";
+            default: return "Never checked";
+        }
+    }
+
     /** True when a Mouser error message means "too many requests". */
     public static boolean isRateLimit(int httpCode, String message) {
         if (httpCode == 429) return true;

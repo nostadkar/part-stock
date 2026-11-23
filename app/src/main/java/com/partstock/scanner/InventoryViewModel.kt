@@ -42,6 +42,10 @@ data class InventoryView(
     val pieces: Int = 0,
     val value: Double = 0.0,
     val unpriced: Int = 0,
+    /** Showing only parts without a unit cost (the Value tile's "unpriced" filter). */
+    val unpricedOnly: Boolean = false,
+    /** Up to [InventoryViewModel.TOP_VALUE] parts with the highest stock value (unit cost × pieces), highest first. */
+    val mostValuable: List<PartRow> = emptyList(),
     /** True when [shown] is sorted lowest stock first (quantity ÷ minimum) instead of grouped by category. */
     val lowestFirst: Boolean = false,
     /** Overview donut by category: pieces, and value (unpriced parts count as 0), top 6 + the rest. */
@@ -95,14 +99,15 @@ class InventoryViewModel(val db: InventoryDb) : ViewModel() {
     val query = MutableStateFlow("")
     val bucket = MutableStateFlow<String?>(null)
     val lowOnly = MutableStateFlow(false)
+    val unpricedOnly = MutableStateFlow(false)
     val bin = MutableStateFlow<String?>(null)
     /** Sort "Lowest stock first" instead of grouping by category; kept while the app runs. */
     val lowestFirst = MutableStateFlow(false)
 
     private val filters = combine(
         query.debounce { if (it.isBlank()) 0L else SEARCH_DEBOUNCE_MS },
-        bucket, lowOnly, bin, lowestFirst,
-    ) { q, b, low, bin, lowest -> Filters(q, b, low, bin, lowest) }
+        bucket, combine(lowOnly, unpricedOnly) { low, unpriced -> low to unpriced }, bin, lowestFirst,
+    ) { q, b, (low, unpriced), bin, lowest -> Filters(q, b, low, bin, lowest, unpriced) }
 
     /** Locations screen sort and search. */
     val binSort = MutableStateFlow(BinStats.Sort.NAME)
@@ -121,6 +126,7 @@ class InventoryViewModel(val db: InventoryDb) : ViewModel() {
         query.value = ""
         bucket.value = null
         lowOnly.value = false
+        unpricedOnly.value = false
     }
 
     private data class Filters(
@@ -129,12 +135,13 @@ class InventoryViewModel(val db: InventoryDb) : ViewModel() {
         val lowOnly: Boolean,
         val bin: String?,
         val lowestFirst: Boolean,
+        val unpricedOnly: Boolean = false,
     )
 
     private fun build(d: InventoryData, f: Filters): InventoryView {
         val parts = d.parts
         val filtered = parts.filter { p ->
-            (f.bucket == null || p.category == f.bucket) && (!f.lowOnly || p.isLow()) &&
+            (f.bucket == null || p.category == f.bucket) && (!f.lowOnly || p.isLow()) && (!f.unpricedOnly || p.unitCost == null) &&
                 (f.query.isBlank() || p.matches(f.query)) &&
                 (f.bin == null || Locations.keyOf(p.bins(), f.bin) != null)
         }
@@ -162,6 +169,9 @@ class InventoryViewModel(val db: InventoryDb) : ViewModel() {
             pieces = parts.sumOf { it.quantity },
             value = parts.sumOf { (it.unitCost ?: 0.0) * it.quantity },
             unpriced = parts.count { it.unitCost == null },
+            unpricedOnly = f.unpricedOnly,
+            mostValuable = parts.filter { (it.unitCost ?: 0.0) * it.quantity > 0 }
+                .sortedByDescending { (it.unitCost ?: 0.0) * it.quantity }.take(TOP_VALUE),
             lowestFirst = f.lowestFirst,
             overviewPieces = overview(parts.groupBy { it.category }.mapValues { (_, ps) -> ps.sumOf { it.quantity }.toDouble() }),
             overviewValue = overview(
@@ -214,5 +224,6 @@ class InventoryViewModel(val db: InventoryDb) : ViewModel() {
         /** The single group's header when sorted lowest stock first. */
         const val LOWEST_FIRST = "Lowest stock first"
         const val OVERVIEW_SLICES = 6
+        const val TOP_VALUE = 5
     }
 }

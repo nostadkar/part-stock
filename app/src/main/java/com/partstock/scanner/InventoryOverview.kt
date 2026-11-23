@@ -34,6 +34,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -53,6 +54,8 @@ internal fun OverviewCard(
     onByValue: (Boolean) -> Unit,
     onCategory: (String?) -> Unit,
     modifier: Modifier = Modifier,
+    /** Opens a part from the "Most valuable parts" list. */
+    onPart: (PartRow) -> Unit = {},
 ) {
     val slices = if (byValue) view.overviewValue else view.overviewPieces
     val palette = ChartColors.categorical()
@@ -140,6 +143,15 @@ internal fun OverviewCard(
                     modifier = Modifier.padding(bottom = 8.dp),
                 )
             }
+            if (view.mostValuable.isNotEmpty()) {
+                Text(
+                    "Most valuable parts", style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                Column(Modifier.padding(bottom = 8.dp)) {
+                    view.mostValuable.forEachIndexed { i, p -> ValueRow(i + 1, p) { onPart(p) } }
+                }
+            }
         }
     }
 }
@@ -175,5 +187,37 @@ private fun LegendRow(s: OverviewSlice, color: Color, byValue: Boolean, selected
             maxLines = 1, modifier = Modifier.padding(horizontal = 8.dp),
         )
         Text(share, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+/** "1  LM358DR · 120 × $0.45   $54.00"; tap opens the part. */
+@Composable
+private fun ValueRow(rank: Int, p: PartRow, onClick: () -> Unit) {
+    val cost = p.unitCost ?: 0.0
+    val total = "\$" + InventoryDb.fmtMoney(cost * p.quantity)
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+            .clickable(role = Role.Button, onClickLabel = "Open part", onClick = onClick)
+            .semantics(mergeDescendants = true) {
+                contentDescription = "Number $rank, ${p.key()}, ${p.quantity} pieces, $total"
+            }
+            .padding(horizontal = 6.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "$rank", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.width(20.dp),
+        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                p.key(), style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                "${p.quantity} × \$${InventoryDb.fmtCost(cost)}", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+            )
+        }
+        Text(total, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
     }
 }

@@ -298,3 +298,43 @@ fun StockBar(
         drawLine(tick, Offset(x, -size.height * 0.4f), Offset(x, size.height * 1.4f), strokeWidth = w)
     }
 }
+
+/**
+ * Price breaks as steps: one equal-width step per break (quantities grow ~10× each, so equal widths read better
+ * than a linear axis), height = unit price from 0. The [marked] step (the break that applies now) is filled.
+ * Put the quantities and prices in words beside it; this is the picture.
+ */
+@Composable
+fun PriceStepChart(
+    prices: DoubleArray,
+    marked: Int,
+    contentDescription: String,
+    modifier: Modifier = Modifier,
+    height: Dp = 64.dp,
+    color: Color = MaterialTheme.colorScheme.primary,
+    animate: Boolean = !rememberReduceMotion(),
+) {
+    val progress = drawIn(animate, prices.toList())
+    val faint = color.copy(alpha = 0.12f)
+    val strong = color.copy(alpha = 0.35f)
+    Canvas(
+        modifier.fillMaxWidth().height(height).semantics { this.contentDescription = contentDescription },
+    ) {
+        if (prices.isEmpty()) return@Canvas
+        val pad = 4.dp.toPx()
+        val max = prices.maxOrNull()?.takeIf { it > 0 } ?: 1.0
+        val w = size.width / prices.size
+        val bottom = size.height - pad
+        fun y(p: Double) = (bottom - (bottom - pad) * (p / max) * progress).toFloat()
+        val line = Path()
+        prices.forEachIndexed { i, p ->
+            val x0 = i * w
+            val top = y(p)
+            drawRect(if (i == marked) strong else faint, Offset(x0, top), Size(w, bottom - top))
+            if (i == 0) line.moveTo(x0, top) else line.lineTo(x0, top)
+            line.lineTo(x0 + w, top)
+        }
+        drawPath(line, color, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+        drawLine(color.copy(alpha = 0.4f), Offset(0f, bottom), Offset(size.width, bottom), strokeWidth = 1.dp.toPx())
+    }
+}

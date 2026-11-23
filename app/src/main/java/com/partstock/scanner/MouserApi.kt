@@ -138,6 +138,14 @@ object MouserApi {
                 if (name.isNotBlank() && !attrs.containsKey(name)) attrs[name] = at.optString("AttributeValue")
             }
         }
+        if (breaks != null) {
+            val table = PriceTable.of(
+                (0 until breaks.length()).mapNotNull { breaks.optJSONObject(it) }
+                    .map { it.optInt("Quantity", 0) to parsePrice(it.optString("Price")) },
+                currency, "Mouser",
+            )
+            PriceTables.put(listOf(o.optString("MouserPartNumber"), o.optString("ManufacturerPartNumber")), table)
+        }
         val description = o.optString("Description")
         return MouserPart(
             mouserPn = o.optString("MouserPartNumber"),

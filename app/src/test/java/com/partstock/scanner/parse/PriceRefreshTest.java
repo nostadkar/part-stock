@@ -41,4 +41,20 @@ public class PriceRefreshTest {
         assertTrue(PriceRefresh.isRateLimit(200, "Maximum calls per minute exceeded."));
         assertFalse(PriceRefresh.isRateLimit(200, "Invalid unique identifier."));
     }
+
+    @Test
+    public void freshnessBands() {
+        LocalDate today = LocalDate.of(2026, 11, 23);
+        assertEquals(PriceRefresh.Freshness.FRESH, PriceRefresh.freshness("Mouser", "2026-11-23 08:00:00", today));
+        assertEquals(PriceRefresh.Freshness.FRESH, PriceRefresh.freshness("Mouser", "2026-10-25 08:00:00", today));
+        assertEquals(PriceRefresh.Freshness.AGING, PriceRefresh.freshness("DigiKey", "2026-10-24 08:00:00", today));
+        assertEquals(PriceRefresh.Freshness.AGING, PriceRefresh.freshness("Mouser", "2026-08-26 08:00:00", today));
+        assertEquals(PriceRefresh.Freshness.OLD, PriceRefresh.freshness("Mouser", "2026-08-25 08:00:00", today));
+        assertEquals(PriceRefresh.Freshness.OLD, PriceRefresh.freshness("Mouser", "garbage", today));
+        assertEquals(PriceRefresh.Freshness.NEVER, PriceRefresh.freshness("", "2026-11-23 08:00:00", today));
+        assertEquals(PriceRefresh.Freshness.NEVER, PriceRefresh.freshness("Mouser", " ", today));
+        assertEquals(PriceRefresh.Freshness.NEVER, PriceRefresh.freshness(null, null, today));
+        assertEquals("30+ days old", PriceRefresh.freshnessText(PriceRefresh.Freshness.AGING));
+        assertEquals("Never checked", PriceRefresh.freshnessText(PriceRefresh.Freshness.NEVER));
+    }
 }

@@ -70,6 +70,14 @@ import com.partstock.scanner.parse.Links
 import com.partstock.scanner.parse.Locations
 import com.partstock.scanner.parse.PriceRefresh
 import java.time.LocalDate
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
+import androidx.compose.material3.Surface
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import com.partstock.scanner.parse.PriceBreaks
 
 /** What the details page can do; everything the old edit dialog did. */
 class PartDetailsActions(
@@ -140,6 +148,11 @@ fun PartDetails(
     val priceLabel = remember(part.priceSource, part.priceCheckedAt) {
         PriceRefresh.label(part.priceSource, part.priceCheckedAt, LocalDate.now())
     }
+    val freshness = remember(part.priceSource, part.priceCheckedAt) {
+        PriceRefresh.freshness(part.priceSource, part.priceCheckedAt, LocalDate.now())
+    }
+    // Price breaks from a lookup this session (they aren't stored); a refresh updates the row and so this too.
+    val priceTable = remember(part) { PriceTables.forPart(part) }
 
     Scaffold(
         topBar = {
@@ -356,7 +369,8 @@ fun PartDetails(
                     val c = part.unitCost
                     InfoRow("Unit cost", if (c != null) "\$" + InventoryDb.fmtCost(c) else "not set")
                     if (c != null) InfoRow("Stock value", "\$" + InventoryDb.fmtMoney(c * part.quantity))
-                    if (priceLabel.isNotBlank()) InfoRow("Checked", priceLabel)
+                    if (c != null || priceLabel.isNotBlank()) FreshnessChip(freshness, priceLabel)
+                    priceTable?.let { PriceBreaksView(it, part.quantity, animate) }
                 }
             }
 
@@ -503,3 +517,73 @@ private fun UseDialog(stock: Int, onDismiss: () -> Unit, onUse: (Int) -> Unit) {
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
+
+/** "Fresh · Price from Mouser, Oct 18" as a colored chip: green, amber (30+ days), red (90+ days) or grey (never). */
+@Composable
+private fun FreshnessChip(f: PriceRefresh.Freshness, label: String) {
+    val (color, icon) = when (f) {
+        PriceRefresh.Freshness.FRESH -> ChartColors.positive() to Icons.Filled.CheckCircle
+        PriceRefresh.Freshness.AGING -> ChartColors.warning() to Icons.Filled.Schedule
+        PriceRefresh.Freshness.OLD -> MaterialTheme.colorScheme.error to Icons.Filled.ErrorOutline
+        PriceRefresh.Freshness.NEVER -> MaterialTheme.colorScheme.onSurfaceVariant to Icons.AutoMirrored.Filled.HelpOutline
+    }
+    val text = PriceRefresh.freshnessText(f) + if (label.isNotBlank()) " · $label" else ""
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = color.copy(alpha = 0.12f),
+        border = BorderStroke(1.dp, color.copy(alpha = 0.6f)),
+        modifier = Modifier.padding(vertical = 4.dp),
+    ) {
+        Row(Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(16.dp))
+            Text(text, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(start = 6.dp))
+        }
+    }
+}
+
+/** The last lookup's price breaks: a step chart, a quantity / price row per break, and the next-break hint. */
+@Composable
+private fun PriceBreaksView(t: PriceTable, have: Int, animate: Boolean) {
+    val shown = t.qty.size.coerceAtMost(MAX_BREAKS)
+    val qty = t.qty.copyOf(shown)
+    val price = t.price.copyOf(shown)
+    val marked = PriceBreaks.pick(qty, have)
+    fun money(d: Double) = (if (t.currency.isBlank() || t.currency == "USD") "\$" else t.currency + " ") + InventoryDb.fmtCost(d)
+    val description = "Price breaks from ${t.source}: " +
+        qty.indices.joinToString(", ") { "${qty[it]}+ at ${money(price[it])}" } +
+        ". Your $have pieces are at the ${qty.getOrNull(marked) ?: 0}+ break."
+    Column(Modifier.padding(top = 8.dp)) {
+        Text(
+            "Price breaks (${t.source})", style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        PriceStepChart(price, marked, description, Modifier.padding(top = 4.dp), animate = animate)
+        Row(Modifier.fillMaxWidth().clearAndSetSemantics {}) {
+            qty.indices.forEach { i ->
+                val on = i == marked
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        "%,d+".format(qty[i]), style = MaterialTheme.typography.labelSmall, maxLines = 1,
+                        fontWeight = if (on) FontWeight.Bold else null,
+                        color = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        InventoryDb.fmtCost(price[i]), style = MaterialTheme.typography.labelSmall, maxLines = 1,
+                        fontWeight = if (on) FontWeight.Bold else null,
+                    )
+                }
+            }
+        }
+        Text(
+            "▲ your $have pcs", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(top = 2.dp).clearAndSetSemantics {},
+        )
+        PriceBreaks.nextBreakHint(qty, price, have) { money(it) }?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+        }
+    }
+}
+
+/** More breaks than this don't fit a phone's width; the rest are the large reel quantities. */
+private const val MAX_BREAKS = 7
+
