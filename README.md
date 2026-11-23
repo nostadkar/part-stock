@@ -199,10 +199,15 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   **Photos are not in Android's cloud backup** (that backup stops working past 25 MB, which a few hundred photos would
   pass, and it would take the database backup down with it); a phone-to-phone transfer does include them. Use the zip
   export to keep a copy of the photos.
+- **Sort, views and filters** (Inventory): the *Sort* menu above the parts orders them by Category (grouped under
+  sticky headers), Name, Quantity (high or low first), Value, Recently updated or Lowest stock first; the toggle next
+  to it switches between *List*, *Compact* (one line per part) and *Grid* (two columns with a large photo and a
+  quantity badge). Both are remembered. Any filter that's on (category, low stock, unpriced, bin, search) shows in one
+  row of removable chips with "24 of 310" and *Clear all*; the search bar shows the result count as you type.
 - **Low stock**: set an optional *Minimum* on a part's page (pencil). Parts at or below it show their count in red
   with a warning icon, and a thin stock bar under the count fills to quantity ÷ (2 × minimum) with a tick at the
-  minimum (amber within 25% above it, red at or below; a larger one on the part page). *Lowest stock first* (next to
-  the Low stock chip) lists everything by quantity ÷ minimum instead of by category. The *Low stock* chip lists them and the summary line counts
+  minimum (amber within 25% above it, red at or below; a larger one on the part page). *Lowest stock first* (in the
+  sort menu) lists everything by quantity ÷ minimum instead of by category. The *Low stock* chip lists them and the summary line counts
   them. Export → *Reorder list CSV* lists the parts below
   their minimum with the quantity to order (minimum − on hand, rounded up: exact below 10, then to 5s, 10s, 50s, 100s),
   MPN, last unit price and link. Its first two columns, *Mouser Part Number* and *Quantity*, are what Mouser's BOM tool
@@ -271,9 +276,11 @@ app/src/main/java/com/partstock/scanner/
   OrderImport.kt             Import a Mouser / DigiKey order CSV
   ProjectsScreen.kt          Projects / BOMs: boards gauge, coverage bars, shortage chart, Build N
   BuildCharts.kt             Boards gauge, coverage bar and shortage chart shared by projects and kit builds
+  InventoryViews.kt          Inventory sort menu, view toggle, active-filter bar, Compact row and Grid cell
   ProjectCards.kt            Projects list card: segmented BOM bar, state chip, blocking-part chips
   parse/BomCsv.java          BOM CSV reading, KiCad and generic (pure Java, unit tested)
   parse/BuildPlan.java       BOM matching, buildable count, per-line coverage and shortage maths (pure Java, unit tested)
+  parse/PartSort.java        Inventory sort orders and List / Compact / Grid views (pure Java, unit tested)
   parse/ProjectStatus.java   Projects list card: line counts, blockers, state chip and sort (pure Java, unit tested)
   parse/OrderCsv.java        Order CSV column mapping (pure Java, unit tested)
   parse/InventoryCsv.java    CSV read/write for export and restore (pure Java, unit tested)

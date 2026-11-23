@@ -6,7 +6,7 @@ import com.partstock.scanner.parse.BinStats
 import com.partstock.scanner.parse.Categories
 import com.partstock.scanner.parse.ChartData
 import com.partstock.scanner.parse.Locations
-import com.partstock.scanner.parse.StockLevel
+import com.partstock.scanner.parse.PartSort
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -46,12 +46,23 @@ data class InventoryView(
     val unpricedOnly: Boolean = false,
     /** Up to [InventoryViewModel.TOP_VALUE] parts with the highest stock value (unit cost × pieces), highest first. */
     val mostValuable: List<PartRow> = emptyList(),
-    /** True when [shown] is sorted lowest stock first (quantity ÷ minimum) instead of grouped by category. */
-    val lowestFirst: Boolean = false,
+    /** The list order; only [PartSort.Sort.CATEGORY] groups by category. */
+    val sort: PartSort.Sort = PartSort.Sort.CATEGORY,
+    /** The search as it was filtered (after the debounce). */
+    val query: String = "",
+    val bucket: String? = null,
+    val lowOnly: Boolean = false,
+    val bin: String? = null,
     /** Overview donut by category: pieces, and value (unpriced parts count as 0), top 6 + the rest. */
     val overviewPieces: List<OverviewSlice> = emptyList(),
     val overviewValue: List<OverviewSlice> = emptyList(),
 ) {
+    /** True when [shown] is sorted lowest stock first (quantity ÷ minimum) instead of grouped by category. */
+    val lowestFirst: Boolean get() = sort == PartSort.Sort.LOWEST_STOCK
+
+    /** Any filter on (category, low stock, unpriced, bin or search): shows the active-filter bar. */
+    val filtered: Boolean get() = bucket != null || lowOnly || unpricedOnly || bin != null || query.isNotBlank()
+
     val parts: List<PartRow> get() = data.parts
     val photos: Map<Long, List<String>> get() = data.photos
     val loaded: Boolean get() = data.loaded
@@ -101,13 +112,13 @@ class InventoryViewModel(val db: InventoryDb) : ViewModel() {
     val lowOnly = MutableStateFlow(false)
     val unpricedOnly = MutableStateFlow(false)
     val bin = MutableStateFlow<String?>(null)
-    /** Sort "Lowest stock first" instead of grouping by category; kept while the app runs. */
-    val lowestFirst = MutableStateFlow(false)
+    /** List order (the screen restores it from Prefs). */
+    val sort = MutableStateFlow(PartSort.Sort.CATEGORY)
 
     private val filters = combine(
         query.debounce { if (it.isBlank()) 0L else SEARCH_DEBOUNCE_MS },
-        bucket, combine(lowOnly, unpricedOnly) { low, unpriced -> low to unpriced }, bin, lowestFirst,
-    ) { q, b, (low, unpriced), bin, lowest -> Filters(q, b, low, bin, lowest, unpriced) }
+        bucket, combine(lowOnly, unpricedOnly) { low, unpriced -> low to unpriced }, bin, sort,
+    ) { q, b, (low, unpriced), bin, order -> Filters(q, b, low, bin, order, unpriced) }
 
     /** Locations screen sort and search. */
     val binSort = MutableStateFlow(BinStats.Sort.NAME)
@@ -134,7 +145,7 @@ class InventoryViewModel(val db: InventoryDb) : ViewModel() {
         val bucket: String?,
         val lowOnly: Boolean,
         val bin: String?,
-        val lowestFirst: Boolean,
+        val sort: PartSort.Sort,
         val unpricedOnly: Boolean = false,
     )
 
@@ -148,12 +159,10 @@ class InventoryViewModel(val db: InventoryDb) : ViewModel() {
         val order = Categories.ALL
         val shown: List<PartRow>
         val groups: List<Pair<String, List<PartRow>>>
-        if (f.lowestFirst) {
-            // Nearly out first (quantity ÷ minimum), parts without a minimum last; ties by part number.
-            shown = filtered.sortedWith(
-                compareBy<PartRow> { StockLevel.ratio(it.quantity, it.minQty) }.thenBy { it.key().lowercase() },
-            )
-            groups = if (shown.isEmpty()) emptyList() else listOf(LOWEST_FIRST to shown)
+        if (!f.sort.grouped()) {
+            // One flat list in the chosen order (PartSort: ties by part number), under one header naming the sort.
+            shown = PartSort.sorted(filtered.map(::SortItem), f.sort).map { it.p }
+            groups = if (shown.isEmpty()) emptyList() else listOf(f.sort.label to shown)
         } else {
             shown = filtered
             groups = shown.groupBy { it.category }.toList()
@@ -172,7 +181,11 @@ class InventoryViewModel(val db: InventoryDb) : ViewModel() {
             unpricedOnly = f.unpricedOnly,
             mostValuable = parts.filter { (it.unitCost ?: 0.0) * it.quantity > 0 }
                 .sortedByDescending { (it.unitCost ?: 0.0) * it.quantity }.take(TOP_VALUE),
-            lowestFirst = f.lowestFirst,
+            sort = f.sort,
+            query = f.query,
+            bucket = f.bucket,
+            lowOnly = f.lowOnly,
+            bin = f.bin,
             overviewPieces = overview(parts.groupBy { it.category }.mapValues { (_, ps) -> ps.sumOf { it.quantity }.toDouble() }),
             overviewValue = overview(
                 parts.groupBy { it.category }.mapValues { (_, ps) -> ps.sumOf { (it.unitCost ?: 0.0) * it.quantity } },
@@ -221,9 +234,16 @@ class InventoryViewModel(val db: InventoryDb) : ViewModel() {
 
         const val SEARCH_DEBOUNCE_MS = 150L
 
-        /** The single group's header when sorted lowest stock first. */
-        const val LOWEST_FIRST = "Lowest stock first"
         const val OVERVIEW_SLICES = 6
         const val TOP_VALUE = 5
     }
+}
+
+/** A part as [PartSort] sees it. */
+private class SortItem(val p: PartRow) : PartSort.Item {
+    override fun key(): String = p.mpn.ifBlank { p.customerPn.ifBlank { p.distributorPn } }
+    override fun quantity(): Int = p.quantity
+    override fun unitCost(): Double? = p.unitCost
+    override fun minQty(): Int? = p.minQty
+    override fun updatedAt(): String = p.updatedAt
 }

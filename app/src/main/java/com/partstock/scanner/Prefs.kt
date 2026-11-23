@@ -121,4 +121,14 @@ class Prefs(context: Context) {
     var projectSort: String
         get() = sp.getString("projectSort", "RECENT") ?: "RECENT"
         set(v) = sp.edit().putString("projectSort", v).apply()
+
+    /** Inventory list order: a PartSort.Sort name (default by category). */
+    var inventorySort: String
+        get() = sp.getString("inventorySort", "CATEGORY") ?: "CATEGORY"
+        set(v) = sp.edit().putString("inventorySort", v).apply()
+
+    /** Inventory layout: a PartSort.View name (List, Compact or Grid). */
+    var inventoryView: String
+        get() = sp.getString("inventoryView", "LIST") ?: "LIST"
+        set(v) = sp.edit().putString("inventoryView", v).apply()
 }

@@ -7,7 +7,9 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollToNodeAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -48,6 +50,8 @@ class SmokeTest {
         val prefs = Prefs(context)
         prefs.lastUpdateCheck = System.currentTimeMillis() // no update check (and no update dialog) during the test
         prefs.batchMode = false
+        prefs.inventoryView = "LIST"
+        prefs.inventorySort = "CATEGORY"
         if (parts.isNotEmpty()) {
             val db = InventoryDb(context)
             parts.forEach { db.save(it) }
@@ -198,6 +202,47 @@ class SmokeTest {
         )
         walkScreens(3)
         openPartPage("LM358DR")
+    }
+
+    /** Inventory in Compact and Grid views (and back to List), sorted by name: rows show and a part page opens. */
+    @Test
+    fun inventoryViews() {
+        launch(
+            listOf(
+                part("RC0603FR-0710KL", 500, "A1", "RES 10K OHM 1% 1/10W 0603"),
+                part("LM358DR", 3, "B1", "IC OPAMP GP 2 CIRCUIT 8SOIC"),
+                part("GRM188R71H104KA93D", 200, "A2", "CAP CER 0.1UF 50V X7R 0603"),
+            ),
+        )
+        compose.onNodeWithText("Inventory (3)").performClick()
+        compose.waitForIdle()
+        for (view in listOf("Compact", "Grid")) {
+            compose.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasContentDescription("$view view"))
+            compose.onNodeWithContentDescription("$view view").performClick()
+            compose.waitForIdle()
+            compose.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasText("LM358DR"))
+            compose.onAllNodesWithText("LM358DR").onFirst().assertExists()
+            assertClickablesLabeled("Inventory $view")
+        }
+        // Grid: open a part page and come back.
+        compose.onAllNodesWithText("LM358DR").onFirst().performSemanticsAction(SemanticsActions.OnClick)
+        compose.waitForIdle()
+        compose.onNodeWithText("Stock over time").assertExists()
+        Espresso.pressBack()
+        compose.waitForIdle()
+        // Sort by name from the sort menu.
+        compose.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasTestTag("inventory-sort"))
+        compose.onNodeWithTag("inventory-sort").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Name").performClick()
+        compose.waitForIdle()
+        compose.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasContentDescription("List view"))
+        compose.onNodeWithContentDescription("List view").performClick()
+        compose.waitForIdle()
+        compose.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasText("RC0603FR-0710KL"))
+        compose.onAllNodesWithText("RC0603FR-0710KL").onFirst().assertExists()
+        Espresso.pressBack()
+        compose.waitForIdle()
     }
 
     /** Landscape: Scan and Inventory open, a part page opens, and rotating back keeps that page open. */

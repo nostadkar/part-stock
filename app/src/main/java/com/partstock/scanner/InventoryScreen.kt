@@ -30,7 +30,6 @@ import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeTopAppBar
@@ -55,6 +54,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -64,6 +65,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.partstock.scanner.parse.Locations
+import com.partstock.scanner.parse.PartSort
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -301,6 +303,8 @@ fun InventoryScreen(
     }
 
     var overviewOpen by remember { mutableStateOf(prefs?.overviewOpen ?: true) }
+    var viewMode by remember { mutableStateOf(PartSort.View.parse(prefs?.inventoryView)) }
+    remember { prefs?.let { vm.sort.value = PartSort.Sort.parse(it.inventorySort) } }
     var overviewByValue by remember { mutableStateOf(prefs?.overviewByValue ?: false) }
 
     val listActions = InventoryListActions(
@@ -319,7 +323,16 @@ fun InventoryScreen(
         dismissSwipeHint = ::swipeHintDone,
         setBucket = { vm.bucket.value = it },
         toggleLow = { vm.lowOnly.value = !lowOnly },
-        toggleLowestFirst = { vm.lowestFirst.value = !vm.lowestFirst.value },
+        setSort = { s ->
+            vm.sort.value = s
+            prefs?.inventorySort = s.name
+        },
+        setView = { v ->
+            viewMode = v
+            prefs?.inventoryView = v.name
+        },
+        clearBin = onClearBin,
+        clearSearch = { setQuery("") },
         clearFilters = {
             vm.bucket.value = null
             vm.lowOnly.value = false
@@ -427,6 +440,15 @@ fun InventoryScreen(
                         },
                         actions = {
                             if (query.isNotEmpty()) {
+                                // Results so far (the list filters as you type).
+                                Text(
+                                    "${shown.size}",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.semantics {
+                                        contentDescription = "${shown.size} result${if (shown.size == 1) "" else "s"}"
+                                    },
+                                )
                                 IconButton(onClick = { setQuery("") }) {
                                     Icon(Icons.Filled.Close, contentDescription = "Clear search")
                                 }
@@ -468,17 +490,8 @@ fun InventoryScreen(
                 sideBySide = landscape && !twoPane,
                 unpricedBadge = unpricedBadge,
                 swipeHint = swipeHint,
+                viewMode = viewMode,
                 modifier = Modifier.padding(top = padding.calculateTopPadding()),
-                header = {
-                    if (bin != null) {
-                        FilterChip(
-                            selected = true,
-                            onClick = onClearBin,
-                            label = { Text("Bin $bin · ${shown.size} part${if (shown.size == 1) "" else "s"} ✕") },
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                        )
-                    }
-                },
             )
         }
     }

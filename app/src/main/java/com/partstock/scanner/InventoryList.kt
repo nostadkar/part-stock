@@ -80,6 +80,7 @@ import com.partstock.scanner.parse.Categories
 import com.partstock.scanner.parse.Highlight
 import com.partstock.scanner.parse.Links
 import com.partstock.scanner.parse.Locations
+import com.partstock.scanner.parse.PartSort
 
 /** What the list does when you tap, swipe or filter. */
 class InventoryListActions(
@@ -88,8 +89,13 @@ class InventoryListActions(
     val addOne: (PartRow) -> Unit,
     val setBucket: (String?) -> Unit,
     val toggleLow: () -> Unit,
-    /** Switches between grouping by category and "Lowest stock first". */
-    val toggleLowestFirst: () -> Unit,
+    /** The list order (sort menu). */
+    val setSort: (PartSort.Sort) -> Unit,
+    /** List / Compact / Grid. */
+    val setView: (PartSort.View) -> Unit = {},
+    /** Filter-bar chips: drop the bin filter / the search. */
+    val clearBin: () -> Unit = {},
+    val clearSearch: () -> Unit = {},
     val clearFilters: () -> Unit,
     val scan: () -> Unit,
     /** Opens or collapses the Overview card. */
@@ -131,6 +137,7 @@ fun InventoryList(
     unpricedBadge: Boolean = false,
     /** First run: a one-line "Swipe a row" tip under the tiles, and the first row peeks sideways once. */
     swipeHint: Boolean = false,
+    viewMode: PartSort.View = PartSort.View.LIST,
 ) {
     val context = LocalContext.current
     var bulkFor by remember { mutableStateOf<PartRow?>(null) }
@@ -159,6 +166,21 @@ fun InventoryList(
         modifier = modifier.fillMaxSize(),
     ) {
         item(key = "header") { header() }
+        if (view.filtered) {
+            item(key = "filters") {
+                val tags = buildList {
+                    view.bucket?.let { add(FilterTag(it) { actions.setBucket(null) }) }
+                    if (view.lowOnly) add(FilterTag("Low stock", actions.toggleLow))
+                    if (view.unpricedOnly) add(FilterTag("Unpriced", actions.toggleUnpriced))
+                    view.bin?.let { add(FilterTag("Bin $it", actions.clearBin)) }
+                    if (view.query.isNotBlank()) add(FilterTag("\u201C${view.query}\u201D", actions.clearSearch))
+                }
+                ActiveFilterBar(tags, view.shown.size, view.parts.size) {
+                    actions.clearFilters()
+                    if (view.bin != null) actions.clearBin()
+                }
+            }
+        }
         val withOverview = view.loaded && view.parts.isNotEmpty() // hidden while loading and with an empty inventory
         if (sideBySide && withOverview) {
             item(key = "stats") {
@@ -220,6 +242,14 @@ fun InventoryList(
                 CategoryChips(view, bucket, lowOnly, actions)
             }
         }
+        if (view.parts.isNotEmpty()) {
+            item(key = "sort-view") {
+                SortViewBar(
+                    view.sort, viewMode, onSort = actions.setSort, onView = actions.setView,
+                    modifier = Modifier.padding(start = 8.dp, end = 16.dp),
+                )
+            }
+        }
         when {
             !view.loaded -> Unit
             view.parts.isEmpty() -> item(key = "empty") {
@@ -250,14 +280,15 @@ fun InventoryList(
                         Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        val tint = if (view.lowestFirst) null else categoryTint(cat)
+                        val grouped = view.sort.grouped()
+                        val tint = if (!grouped) null else categoryTint(cat)
                         Box(
                             Modifier.size(26.dp).clip(CircleShape)
                                 .background(tint?.container ?: MaterialTheme.colorScheme.secondaryContainer),
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(
-                                if (view.lowestFirst) Icons.AutoMirrored.Filled.Sort else categoryIcon(cat),
+                                if (!grouped) Icons.AutoMirrored.Filled.Sort else categoryIcon(cat),
                                 contentDescription = null,
                                 tint = tint?.onContainer ?: MaterialTheme.colorScheme.onSecondaryContainer,
                                 modifier = Modifier.size(16.dp),
@@ -274,27 +305,69 @@ fun InventoryList(
                     }
                 }
             }
+            if (viewMode == PartSort.View.GRID) {
+                // Two columns: one list item per pair, keyed by its first part.
+                items(rows.chunked(2), key = { "g-" + it.first().id }) { pair ->
+                    val rowModifier = if (animate) Modifier.animateItem() else Modifier
+                    Row(
+                        rowModifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        pair.forEach { p ->
+                            SwipeRow(
+                                part = p,
+                                onUse = { actions.useOne(p) },
+                                onAdd = { actions.addOne(p) },
+                                modifier = Modifier.weight(1f),
+                                peek = swipeHint && p.id == firstId,
+                            ) {
+                                GridPartCell(
+                                    part = p,
+                                    photo = view.photos[p.id]?.firstOrNull(),
+                                    query = query,
+                                    scopes = scopes,
+                                    unpricedBadge = unpricedBadge,
+                                    onClick = { actions.open(p) },
+                                )
+                            }
+                        }
+                        if (pair.size == 1) Spacer(Modifier.weight(1f))
+                    }
+                }
+                return@forEach
+            }
             items(rows, key = { it.id }) { p ->
                 val rowModifier = if (animate) Modifier.animateItem() else Modifier
                 SwipeRow(
                     part = p,
                     onUse = { actions.useOne(p) },
                     onAdd = { actions.addOne(p) },
-                    modifier = rowModifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    modifier = rowModifier.padding(rowPadding(viewMode)),
                     peek = swipeHint && p.id == firstId,
                 ) {
-                    PartRowCard(
-                        part = p,
-                        photo = view.photos[p.id]?.firstOrNull(),
-                        query = query,
-                        scopes = scopes,
-                        animate = animate,
-                        onClick = { actions.open(p) },
-                        datasheets = datasheets,
-                        unpricedBadge = unpricedBadge,
-                        onSpecTap = actions.search,
-                        onLongCount = if (actions.useN != null) ({ bulkFor = p }) else null,
-                    )
+                    if (viewMode == PartSort.View.COMPACT) {
+                        CompactPartRow(
+                            part = p,
+                            photo = view.photos[p.id]?.firstOrNull(),
+                            query = query,
+                            scopes = scopes,
+                            unpricedBadge = unpricedBadge,
+                            onClick = { actions.open(p) },
+                        )
+                    } else {
+                        PartRowCard(
+                            part = p,
+                            photo = view.photos[p.id]?.firstOrNull(),
+                            query = query,
+                            scopes = scopes,
+                            animate = animate,
+                            onClick = { actions.open(p) },
+                            datasheets = datasheets,
+                            unpricedBadge = unpricedBadge,
+                            onSpecTap = actions.search,
+                            onLongCount = if (actions.useN != null) ({ bulkFor = p }) else null,
+                        )
+                    }
                 }
             }
         }
@@ -409,16 +482,6 @@ private fun CategoryChips(view: InventoryView, bucket: String?, lowOnly: Boolean
                     onClick = actions.toggleLow,
                     leadingIcon = { Icon(Icons.Filled.Warning, contentDescription = null, modifier = Modifier.size(18.dp)) },
                     label = { Text("Low stock · ${view.lowCount}") },
-                )
-            }
-            item(key = "lowest") {
-                FilterChip(
-                    selected = view.lowestFirst,
-                    onClick = actions.toggleLowestFirst,
-                    leadingIcon = {
-                        Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = null, modifier = Modifier.size(18.dp))
-                    },
-                    label = { Text("Lowest stock first") },
                 )
             }
         }
