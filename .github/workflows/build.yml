@@ -48,9 +48,14 @@ jobs:
           force-avd-creation: false
           emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
+          # Line 1: the smoke tests on their own (their result is the step's result). Line 2: the screenshots in a
+          # separate run, so they can't disturb the smoke tests and never fail the build. Then pull, log, exit.
           script: |
-            ./gradlew :app:connectedDebugAndroidTest --stacktrace; echo $? > smoke-exit.txt
+            ./gradlew :app:connectedDebugAndroidTest --stacktrace -Pandroid.testInstrumentationRunnerArguments.notClass=com.partstock.scanner.ScreenshotTest; echo $? > smoke-exit.txt
+            timeout 900 ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.partstock.scanner.ScreenshotTest || echo "Screenshot run failed (ignored)"
             timeout 120 adb pull /sdcard/Download/part-stock-screenshots . || echo "No screenshots pulled"
+            ls part-stock-screenshots || true
+            adb logcat -d -s PartStockShots | tail -n 150 || true
             exit $(cat smoke-exit.txt)
 
       # Screenshots for checking GUI changes by eye; a problem here never fails the build.
