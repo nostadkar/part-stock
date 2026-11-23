@@ -1,6 +1,8 @@
 package com.partstock.scanner
 
 import android.Manifest
+import androidx.compose.ui.test.hasScrollToNodeAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
@@ -8,6 +10,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -108,6 +111,9 @@ class SmokeTest {
     /** Scan → Inventory → part page (with its Stock over time card) → back → back. */
     private fun openPartPage(mpn: String) {
         compose.onNodeWithText("Inventory (3)").performClick()
+        compose.waitForIdle()
+        // The row may be below the Overview card, outside the composed part of the list: scroll to it first.
+        compose.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasText(mpn))
         compose.waitForIdle()
         compose.onAllNodesWithText(mpn).onFirst().performClick()
         compose.waitForIdle()
