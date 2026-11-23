@@ -1,5 +1,7 @@
 package com.partstock.scanner
 
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.selection.toggleable
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -171,8 +173,13 @@ private fun OrderLinesDialog(
                     )
                 }
                 order.lines.forEachIndexed { i, l ->
-                    Row(verticalAlignment = Alignment.Top) {
-                        Checkbox(checked = checked[i], onCheckedChange = { checked[i] = it })
+                    Row(
+                        verticalAlignment = Alignment.Top,
+                        modifier = Modifier.fillMaxWidth().toggleable(value = checked[i], role = Role.Checkbox) {
+                            checked[i] = it
+                        },
+                    ) {
+                        Checkbox(checked = checked[i], onCheckedChange = null)
                         Column(Modifier.weight(1f)) {
                             Text(
                                 l.mpn.ifBlank { l.distributorPn },

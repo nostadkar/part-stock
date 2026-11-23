@@ -239,7 +239,7 @@ fun PartDetails(
                     FilledTonalIconButton(
                         onClick = { actions.use(1) }, enabled = part.quantity > 0 && !editing,
                         modifier = Modifier.size(56.dp),
-                    ) { Icon(Icons.Filled.Remove, contentDescription = "Use 1") }
+                    ) { Icon(Icons.Filled.Remove, contentDescription = "Use 1, current count ${part.quantity}") }
                     Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                         QuantityText(
                             part.quantity, animate,
@@ -271,7 +271,7 @@ fun PartDetails(
                     }
                     FilledTonalIconButton(
                         onClick = actions.addOne, enabled = !editing, modifier = Modifier.size(56.dp),
-                    ) { Icon(Icons.Filled.Add, contentDescription = "Add 1") }
+                    ) { Icon(Icons.Filled.Add, contentDescription = "Add 1, current count ${part.quantity}") }
                 }
             }
 

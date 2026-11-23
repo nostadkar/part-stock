@@ -1,5 +1,13 @@
 package com.partstock.scanner
 
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.fadeIn
@@ -308,14 +316,15 @@ private fun StatTile(
             if (onClick != null) it.clickable(onClickLabel = clickLabel, role = Role.Button, onClick = onClick) else it
         },
     ) {
+        // At large font sizes the value shrinks to fit instead of being cut off, and labels wrap.
+        val big = LocalDensity.current.fontScale > 1.3f
         Column(Modifier.padding(horizontal = 10.dp, vertical = 10.dp)) {
-            Text(
-                value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = content,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            FitText(
+                value, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold), color = content,
             )
             Text(
                 label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                maxLines = if (big) 3 else 1, overflow = TextOverflow.Ellipsis,
             )
             if (chip != null) {
                 Surface(
@@ -325,7 +334,8 @@ private fun StatTile(
                     modifier = Modifier.padding(top = 4.dp),
                 ) {
                     Text(
-                        chip, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        chip, style = MaterialTheme.typography.labelSmall, maxLines = if (big) 2 else 1,
+                        overflow = TextOverflow.Ellipsis,
                         color = if (selected) content else MaterialTheme.colorScheme.onTertiaryContainer,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                     )
@@ -404,7 +414,13 @@ private fun SwipeRow(
     )
     SwipeToDismissBox(
         state = state,
-        modifier = modifier,
+        // TalkBack users can't swipe a row: offer the same actions in its actions menu.
+        modifier = modifier.semantics {
+            customActions = listOf(
+                CustomAccessibilityAction("Use 1") { onUse(); true },
+                CustomAccessibilityAction("Add 1") { onAdd(); true },
+            )
+        },
         backgroundContent = {
             val dir = state.dismissDirection
             val use = dir == SwipeToDismissBoxValue.StartToEnd
@@ -499,7 +515,13 @@ private fun PartRowCard(
                     }
                 }
             }
-            Column(horizontalAlignment = Alignment.End) {
+            Column(
+                horizontalAlignment = Alignment.End,
+                // One spoken summary instead of "Low stock", "3", "min 10" and the bar separately.
+                modifier = Modifier.clearAndSetSemantics {
+                    contentDescription = stockDescription(p, unpricedBadge && p.unitCost == null)
+                },
+            ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (p.isLow()) {
                         // An icon, not just a red dot, so low stock isn't shown by color alone.
@@ -617,4 +639,35 @@ internal fun EmptyState(
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) { buttons() }
     }
+}
+
+/**
+ * One line of [text] that shrinks (down to 60%) until it fits the width instead of ellipsizing, so a number is never
+ * hidden at a large font size. At the default size it fits and looks like a normal Text.
+ */
+@Composable
+internal fun FitText(text: String, style: androidx.compose.ui.text.TextStyle, color: Color, modifier: Modifier = Modifier) {
+    var scale by remember(text, style) { mutableFloatStateOf(1f) }
+    Text(
+        text,
+        style = style.copy(fontSize = style.fontSize * scale),
+        color = color,
+        maxLines = 1,
+        softWrap = false,
+        overflow = TextOverflow.Clip,
+        modifier = modifier,
+        onTextLayout = { r -> if (r.hasVisualOverflow && scale > 0.6f) scale = (scale * 0.9f).coerceAtLeast(0.6f) },
+    )
+}
+
+/** What TalkBack says for a row's count: "Low stock, 3, minimum 10" or "500 in stock, minimum 100". */
+internal fun stockDescription(p: PartRow, noPrice: Boolean = false): String {
+    val m = p.minQty
+    val base = when {
+        p.isLow() && m != null -> "Low stock, ${p.quantity}, minimum $m"
+        p.isLow() -> "Low stock, ${p.quantity}"
+        m != null -> "${p.quantity} in stock, minimum $m"
+        else -> "${p.quantity} in stock"
+    }
+    return if (noPrice) "$base, no price" else base
 }

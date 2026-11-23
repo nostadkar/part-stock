@@ -1,5 +1,7 @@
 package com.partstock.scanner
 
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.selection.toggleable
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -248,7 +250,14 @@ fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: 
                 }
                 status?.let { StatusLine(it) }
                 if (saved) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        // The whole row toggles, so TalkBack reads the title with the switch and the target is big.
+                        modifier = Modifier.fillMaxWidth().toggleable(value = autoLookup, role = Role.Switch) {
+                            autoLookup = it
+                            prefs.autoMouserLookup = it
+                        },
+                    ) {
                         Column(Modifier.weight(1f)) {
                             Text("Look up on Mouser after each scan", style = MaterialTheme.typography.bodyLarge)
                             Text(
@@ -257,10 +266,7 @@ fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: 
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        Switch(checked = autoLookup, onCheckedChange = {
-                            autoLookup = it
-                            prefs.autoMouserLookup = it
-                        })
+                        Switch(checked = autoLookup, onCheckedChange = null)
                     }
                 }
             }
@@ -314,7 +320,14 @@ fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: 
             }
 
             SettingsCard("scanning", Icons.Filled.QrCodeScanner, "Scanning & look", prefs, collapsible = false) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    // The whole row toggles, so TalkBack reads the title with the switch and the target is big.
+                    modifier = Modifier.fillMaxWidth().toggleable(value = readBarcodes, role = Role.Switch) {
+                        readBarcodes = it
+                        prefs.readBarcodes = it
+                    },
+                ) {
                     Column(Modifier.weight(1f)) {
                         Text("Read label barcodes", style = MaterialTheme.typography.bodyLarge)
                         Text(
@@ -324,13 +337,17 @@ fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: 
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    Switch(checked = readBarcodes, onCheckedChange = {
-                        readBarcodes = it
-                        prefs.readBarcodes = it
-                    })
+                    Switch(checked = readBarcodes, onCheckedChange = null)
                 }
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        // The whole row toggles, so TalkBack reads the title with the switch and the target is big.
+                        modifier = Modifier.fillMaxWidth().toggleable(value = AppTheme.dynamicColor, role = Role.Switch) {
+                            AppTheme.dynamicColor = it
+                            prefs.dynamicColor = it
+                        },
+                    ) {
                         Column(Modifier.weight(1f)) {
                             Text("Wallpaper colors", style = MaterialTheme.typography.bodyLarge)
                             Text(
@@ -339,10 +356,7 @@ fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: 
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        Switch(checked = AppTheme.dynamicColor, onCheckedChange = {
-                            AppTheme.dynamicColor = it
-                            prefs.dynamicColor = it
-                        })
+                        Switch(checked = AppTheme.dynamicColor, onCheckedChange = null)
                     }
                 }
             }

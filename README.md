@@ -42,7 +42,8 @@ open the repo → **Releases** → latest → tap `part-stock.apk` → allow ins
 
 Before the release step, the workflow also starts the app on an Android emulator (API 30) and runs a smoke test
 (`app/src/androidTest/.../SmokeTest.kt`) that opens Inventory, Locations, Projects and Settings and goes back, with an
-empty inventory and with a few parts. If the app crashes there, no release is published. Run it locally with
+empty inventory and with a few parts. One run is at 200% font size and checks that every tappable control has text or a
+description for TalkBack. If the app crashes there, no release is published. Run it locally with
 `./gradlew connectedDebugAndroidTest` and a device or emulator attached.
 
 The APK is signed with a test key kept in the repo (`app/partstock-test.keystore`), so each new build

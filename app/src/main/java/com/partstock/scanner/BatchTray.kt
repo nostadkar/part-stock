@@ -226,7 +226,7 @@ private fun BatchItemCard(c: BatchCard, onClick: () -> Unit, onRemove: () -> Uni
         BatchStatus.LOOKING_UP -> scheme.surfaceVariant to scheme.onSurfaceVariant
     }
     Card(
-        modifier = Modifier.width(CARD_WIDTH).height(CARD_HEIGHT).clickable(onClick = onClick),
+        modifier = Modifier.width(CARD_WIDTH).height(CARD_HEIGHT).clickable(onClickLabel = "Review", onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = container, contentColor = content),
     ) {
         Box {

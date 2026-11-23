@@ -4,6 +4,9 @@ import android.Manifest
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -110,6 +113,72 @@ class SmokeTest {
         Espresso.pressBack()
         compose.waitForIdle()
         compose.onNodeWithText("Inventory ($partCount)").assertIsDisplayed()
+    }
+
+    /**
+     * Every clickable thing on screen has something for TalkBack to read: text, a content description or a click
+     * label. Fails with the bounds of the ones that don't.
+     */
+    private fun assertClickablesLabeled(screen: String) {
+        compose.waitForIdle()
+        val bad = compose.onAllNodes(hasClickAction()).fetchSemanticsNodes().filter { n ->
+            val c = n.config
+            val text = c.getOrNull(SemanticsProperties.Text)?.joinToString("").orEmpty() +
+                c.getOrNull(SemanticsProperties.EditableText)?.text.orEmpty()
+            val desc = c.getOrNull(SemanticsProperties.ContentDescription)?.joinToString("").orEmpty()
+            val label = c.getOrNull(SemanticsActions.OnClick)?.label.orEmpty()
+            text.isBlank() && desc.isBlank() && label.isBlank()
+        }
+        check(bad.isEmpty()) {
+            "$screen: ${bad.size} clickable(s) with no text or description at " + bad.joinToString { it.boundsInRoot.toString() }
+        }
+    }
+
+    private fun setFontScale(scale: Float) {
+        InstrumentationRegistry.getInstrumentation().uiAutomation
+            .executeShellCommand("settings put system font_scale $scale").close()
+        Thread.sleep(1500) // let the configuration change reach the app before it launches
+    }
+
+    /** At 200% font: the main screens and a part page open without crashing, and every control is labeled. */
+    @Test
+    fun largeFontAndLabels() {
+        setFontScale(2.0f)
+        try {
+            launch(
+                listOf(
+                    part("RC0603FR-0710KL", 500, "A1", "RES 10K OHM 1% 1/10W 0603"),
+                    part("LM358DR", 3, "B1", "IC OPAMP GP 2 CIRCUIT 8SOIC"),
+                ),
+            )
+            assertClickablesLabeled("Scan")
+            compose.onNodeWithText("Inventory (2)").performClick()
+            compose.waitForIdle()
+            assertClickablesLabeled("Inventory")
+            compose.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasText("LM358DR"))
+            compose.waitForIdle()
+            compose.onAllNodesWithText("LM358DR").onFirst().performSemanticsAction(SemanticsActions.OnClick)
+            compose.waitForIdle()
+            compose.onNodeWithText("Stock over time").assertExists()
+            assertClickablesLabeled("Part page")
+            Espresso.pressBack()
+            compose.waitForIdle()
+            tab("LOCATIONS").performClick()
+            compose.waitForIdle()
+            assertClickablesLabeled("Locations")
+            tab("PROJECTS").performClick()
+            compose.waitForIdle()
+            assertClickablesLabeled("Projects")
+            tab("SCAN").performClick()
+            compose.waitForIdle()
+            compose.onNodeWithContentDescription("Settings").performClick()
+            compose.waitForIdle()
+            assertClickablesLabeled("Settings")
+            Espresso.pressBack()
+            compose.waitForIdle()
+        } finally {
+            setFontScale(1.0f)
+        }
     }
 
     @Test
