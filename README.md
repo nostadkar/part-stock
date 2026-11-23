@@ -55,6 +55,11 @@ Part Stock). Settings → Check for updates does the same on demand. The build n
 
 To build locally instead: open the folder in Android Studio and press Run. Min Android 8.0.
 
+**Getting around**: a bottom bar switches between Scan, Inventory, Locations and Projects (a side rail in landscape);
+Settings is in the Scan screen's top bar. The bar steps aside on the review screen, a part page and while typing. If
+Android stops the app in the background, it reopens on the same screen with the same bin filter, search, filters, open
+part and list position (an unsaved review comes back as Scan; batch bags stay in the tray).
+
 **Look**: an adaptive launcher icon (a chip in a parts bin inside scan brackets, vector only) with a monochrome layer for
 Android 13 themed icons, and a matching splash screen at launch. On Android 12+ the app takes its colors from the
 wallpaper; Settings → *Wallpaper colors* off (or Android 8–11) uses Part Stock's own navy and amber.

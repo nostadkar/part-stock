@@ -12,6 +12,8 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
@@ -63,27 +65,43 @@ class SmokeTest {
         raw = "", unitCost = 0.05, productUrl = "", category = "",
     )
 
-    /** Scan → Inventory → Locations → back → Projects → back → back → Settings → back. */
+    private fun tab(name: String) = compose.onNodeWithTag("tab-$name")
+
+    /**
+     * Scan → Inventory → Locations (bottom bar) → back → Projects (bar) → back → back → Projects and Scan from the bar →
+     * Settings → back.
+     */
     private fun walkScreens(partCount: Int) {
+        tab("SCAN").assertIsDisplayed().assertIsSelected()
         compose.onNodeWithText("Inventory ($partCount)").assertIsDisplayed().performClick()
         compose.waitForIdle()
-        compose.onNodeWithContentDescription("Locations").assertIsDisplayed()
+        tab("INVENTORY").assertIsDisplayed().assertIsSelected()
 
-        compose.onNodeWithContentDescription("Locations").performClick()
+        tab("LOCATIONS").performClick()
         compose.waitForIdle()
+        tab("LOCATIONS").assertIsSelected()
         compose.onAllNodesWithText("Locations").onFirst().assertExists()
-        Espresso.pressBack()
+        Espresso.pressBack() // Locations → Inventory
         compose.waitForIdle()
+        tab("INVENTORY").assertIsSelected()
 
-        compose.onNodeWithContentDescription("Projects / BOMs").assertIsDisplayed().performClick()
+        tab("PROJECTS").performClick()
         compose.waitForIdle()
         compose.onAllNodesWithText("Projects").onFirst().assertExists()
-        Espresso.pressBack()
+        Espresso.pressBack() // Projects → Inventory
         compose.waitForIdle()
 
-        compose.onNodeWithContentDescription("Locations").assertIsDisplayed()
+        tab("INVENTORY").assertIsSelected()
         Espresso.pressBack() // Inventory → Scan
         compose.waitForIdle()
+        tab("SCAN").assertIsSelected()
+
+        tab("PROJECTS").performClick()
+        compose.waitForIdle()
+        tab("PROJECTS").assertIsSelected()
+        tab("SCAN").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Read label").assertExists()
 
         compose.onNodeWithContentDescription("Settings").assertIsDisplayed().performClick()
         compose.waitForIdle()
@@ -139,6 +157,22 @@ class SmokeTest {
         compose.waitForIdle()
     }
 
+    /** The open screen survives the activity being recreated (the same saved state is used after process death). */
+    @Test
+    fun screenSurvivesRecreate() {
+        launch(listOf(part("LM358DR", 3, "B1", "IC OPAMP GP 2 CIRCUIT 8SOIC")))
+        compose.onNodeWithText("Inventory (1)").performClick()
+        compose.waitForIdle()
+        tab("LOCATIONS").performClick()
+        compose.waitForIdle()
+        scenario!!.recreate()
+        compose.waitForIdle()
+        tab("LOCATIONS").assertIsDisplayed().assertIsSelected()
+        Espresso.pressBack() // Locations → Inventory, as before
+        compose.waitForIdle()
+        tab("INVENTORY").assertIsSelected()
+    }
+
     private fun rotate(orientation: Int) {
         scenario!!.onActivity {
             it.requestedOrientation = if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
@@ -166,9 +200,10 @@ class SmokeTest {
         compose.onAllNodesWithText(mpn).onFirst().performSemanticsAction(SemanticsActions.OnClick)
         compose.waitForIdle()
         compose.onNodeWithText("Stock over time").assertExists()
+        tab("INVENTORY").assertDoesNotExist() // the bar steps aside on the part page
         Espresso.pressBack() // part page → Inventory
         compose.waitForIdle()
-        compose.onNodeWithContentDescription("Locations").assertIsDisplayed()
+        tab("INVENTORY").assertIsDisplayed().assertIsSelected()
         Espresso.pressBack() // Inventory → Scan
         compose.waitForIdle()
     }

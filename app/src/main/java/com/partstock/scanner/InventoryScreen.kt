@@ -26,7 +26,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.DeveloperBoard
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
@@ -79,8 +78,6 @@ fun InventoryScreen(
     vm: InventoryViewModel,
     secrets: SecretStore,
     onBack: () -> Unit,
-    onProjects: () -> Unit = {},
-    onLocations: () -> Unit = {},
     /** Show only parts with stock in this bin (picked on the Locations screen); null = all. */
     bin: String? = null,
     onClearBin: () -> Unit = {},
@@ -89,21 +86,40 @@ fun InventoryScreen(
     openPart: Long? = null,
     /** "Scan a label" on the empty states. */
     onScan: () -> Unit = onBack,
+    /** Told whether a part page fills the screen (one-pane layout), so the bottom bar can step aside. */
+    onPartPage: (Boolean) -> Unit = {},
 ) {
     val context = LocalContext.current
     val db = vm.db
     // Parts, photos and filters come from the ViewModel, loaded and filtered off the main thread.
     remember(bin) { vm.bin.value = bin }
+    // Saveable, so a configuration change that recreates the screen keeps the search and the open part.
+    var query by rememberSaveable { mutableStateOf(vm.query.value) }
+    var searching by rememberSaveable { mutableStateOf(query.isNotEmpty()) }
+    // The filters live in the ViewModel; a saved copy brings them back after Android stops the app in the background
+    // (or the activity is recreated, which clears the ViewModel's filters on the way out).
+    var savedBucket by rememberSaveable { mutableStateOf(vm.bucket.value) }
+    var savedLow by rememberSaveable { mutableStateOf(vm.lowOnly.value) }
+    var savedUnpriced by rememberSaveable { mutableStateOf(vm.unpricedOnly.value) }
+    remember {
+        vm.query.value = query
+        vm.bucket.value = savedBucket
+        vm.lowOnly.value = savedLow
+        vm.unpricedOnly.value = savedUnpriced
+    }
     DisposableEffect(Unit) { onDispose { vm.clearFilters() } }
     val view by vm.view.collectAsStateWithLifecycle()
     val data by vm.data.collectAsStateWithLifecycle()
     val bucket by vm.bucket.collectAsStateWithLifecycle()
     val lowOnly by vm.lowOnly.collectAsStateWithLifecycle()
+    val unpricedOnly by vm.unpricedOnly.collectAsStateWithLifecycle()
+    LaunchedEffect(bucket, lowOnly, unpricedOnly) {
+        savedBucket = bucket
+        savedLow = lowOnly
+        savedUnpriced = unpricedOnly
+    }
     val shown = view.shown
     val scope = rememberCoroutineScope()
-    // Saveable, so a configuration change that recreates the screen keeps the search and the open part.
-    var query by rememberSaveable { mutableStateOf(vm.query.value) }
-    var searching by rememberSaveable { mutableStateOf(query.isNotEmpty()) }
     var menuOpen by remember { mutableStateOf(false) }
     // Parts below their minimum, counted when the menu opens (null while counting).
     var reorderCount by remember { mutableStateOf<Int?>(null) }
@@ -120,6 +136,7 @@ fun InventoryScreen(
     var refreshing by remember { mutableStateOf(false) }
     var importingOrder by remember { mutableStateOf(false) }
     val reduceMotion = rememberReduceMotion()
+    // Saved with the screen, so the list comes back at the same place (also after the app was stopped).
     val listState = rememberLazyListState()
     val barState = rememberTopAppBarState()
     val focus = remember { FocusRequester() }
@@ -304,6 +321,9 @@ fun InventoryScreen(
     // Two panes (list | details) on tablets and unfolded foldables; a phone in landscape keeps one pane.
     val config = LocalConfiguration.current
     val twoPane = config.smallestScreenWidthDp >= 600 && config.screenWidthDp >= 600
+    val partPage = selected != null && !twoPane
+    LaunchedEffect(partPage) { onPartPage(partPage) }
+    DisposableEffect(Unit) { onDispose { onPartPage(false) } }
     val landscape = config.screenWidthDp > config.screenHeightDp
 
     val detailsPane: @Composable (PartRow, SharedScopes?) -> Unit = { part, scopes ->
@@ -400,12 +420,6 @@ fun InventoryScreen(
                         actions = {
                             IconButton(onClick = { searching = true }) {
                                 Icon(Icons.Filled.Search, contentDescription = "Search")
-                            }
-                            IconButton(onClick = onLocations) {
-                                Icon(Icons.Filled.Inventory2, contentDescription = "Locations")
-                            }
-                            IconButton(onClick = onProjects) {
-                                Icon(Icons.Filled.DeveloperBoard, contentDescription = "Projects / BOMs")
                             }
                             menu()
                         },

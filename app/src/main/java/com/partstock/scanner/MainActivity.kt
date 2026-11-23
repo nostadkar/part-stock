@@ -24,6 +24,34 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.DeveloperBoard
+import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.Text
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -33,6 +61,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.key
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -98,10 +127,75 @@ private sealed interface Screen {
     data object Projects : Screen
 }
 
+/** A name that is the same in every process (a class's hashCode isn't), so saved state inside a screen comes back. */
+private val Screen.tag: String
+    get() = when (this) {
+        Screen.Scan -> "scan"
+        is Screen.Review -> "review"
+        is Screen.Inventory -> "inventory"
+        Screen.Locations -> "locations"
+        Screen.Settings -> "settings"
+        Screen.Projects -> "projects"
+    }
+
+/**
+ * Saves the open screen so it comes back after Android stops the app in the background. A review isn't saved (its photo
+ * is too big for saved state): it comes back as Scan; a batch bag is still in the tray.
+ */
+private val ScreenSaver = Saver<Screen, String>(
+    save = { s ->
+        when (s) {
+            is Screen.Inventory -> listOf("inventory", s.bin ?: "", s.openPart?.toString() ?: "").joinToString("\n")
+            is Screen.Review -> "scan"
+            else -> s.tag
+        }
+    },
+    restore = { v ->
+        val f = v.split("\n")
+        when (f[0]) {
+            "inventory" -> Screen.Inventory(
+                bin = f.getOrNull(1)?.takeIf { it.isNotEmpty() },
+                openPart = f.getOrNull(2)?.toLongOrNull(),
+            )
+            "locations" -> Screen.Locations
+            "settings" -> Screen.Settings
+            "projects" -> Screen.Projects
+            else -> Screen.Scan
+        }
+    },
+)
+
+/** The top-level screens in the bottom bar (Settings stays in the Scan screen's top bar). */
+private enum class Tab(val label: String, val icon: ImageVector) {
+    SCAN("Scan", Icons.Filled.CameraAlt),
+    INVENTORY("Inventory", Icons.AutoMirrored.Filled.ViewList),
+    LOCATIONS("Locations", Icons.Filled.Inventory2),
+    PROJECTS("Projects", Icons.Filled.DeveloperBoard),
+}
+
+private fun Screen.tab(): Tab? = when (this) {
+    Screen.Scan -> Tab.SCAN
+    is Screen.Inventory -> Tab.INVENTORY
+    Screen.Locations -> Tab.LOCATIONS
+    Screen.Projects -> Tab.PROJECTS
+    is Screen.Review, Screen.Settings -> null
+}
+
+private fun Tab.screen(): Screen = when (this) {
+    Tab.SCAN -> Screen.Scan
+    Tab.INVENTORY -> Screen.Inventory()
+    Tab.LOCATIONS -> Screen.Locations
+    Tab.PROJECTS -> Screen.Projects
+}
+
 @Composable
 private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
     val context = LocalContext.current
-    var screen by remember { mutableStateOf<Screen>(Screen.Scan) }
+    // Saveable: after Android stops the app in the background it reopens on the same screen (the camera only starts
+    // when that is Scan).
+    var screen by rememberSaveable(stateSaver = ScreenSaver) { mutableStateOf<Screen>(Screen.Scan) }
+    // A part page is open on Inventory (phone layout): the bottom bar is hidden there.
+    var partPageOpen by remember { mutableStateOf(false) }
     // Parts are loaded on IO and kept up to date by the ViewModel (no database reads on the main thread).
     val vm: InventoryViewModel = viewModel { InventoryViewModel(db) }
     val inventory by vm.data.collectAsStateWithLifecycle()
@@ -187,12 +281,46 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
     }
 
     val reduceMotion = rememberReduceMotion()
-    Box(Modifier.fillMaxSize()) {
+    val tab = screen.tab()
+    // Read through derivedStateOf, so the keyboard's open/close animation doesn't recompose the app every frame.
+    val ime = WindowInsets.ime
+    val density = LocalDensity.current
+    val keyboardOpen by remember(ime, density) { derivedStateOf { ime.getBottom(density) > 0 } }
+    val showBar = tab != null && !keyboardOpen && !(tab == Tab.INVENTORY && partPageOpen)
+    val config = LocalConfiguration.current
+    // Landscape phones get a rail on the side instead, so the camera and lists keep their height.
+    val rail = config.screenWidthDp > config.screenHeightDp
+    val railInsets = WindowInsets.systemBars.union(WindowInsets.displayCutout)
+        .only(WindowInsetsSides.Start + WindowInsetsSides.Vertical)
+    val goTo: (Tab) -> Unit = { t -> if (screen != t.screen()) screen = t.screen() }
+
+    Row(Modifier.fillMaxSize()) {
+    if (showBar && rail) {
+        NavigationRail(windowInsets = railInsets) {
+            Tab.entries.forEach { t ->
+                NavigationRailItem(
+                    selected = t == tab,
+                    modifier = Modifier.testTag("tab-${t.name}"),
+                    onClick = { goTo(t) },
+                    icon = { Icon(t.icon, contentDescription = null) },
+                    label = { Text(t.label) },
+                )
+            }
+        }
+    }
+    Column(Modifier.weight(1f).fillMaxSize()) {
+    // The bar takes the system navigation inset, so the screen above it doesn't pad for it again.
+    val consumed = when {
+        !showBar -> Modifier
+        rail -> Modifier.consumeWindowInsets(railInsets.only(WindowInsetsSides.Start))
+        else -> Modifier.consumeWindowInsets(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom))
+    }
+    Box(Modifier.weight(1f).fillMaxSize().then(consumed)) {
     key(dataVersion) {
     // Shared-axis style: forward slides in from the right, back reverses it; none with "Remove animations".
     AnimatedContent(
         targetState = screen,
-        contentKey = { it::class },
+        contentKey = { it.tag },
         transitionSpec = { screenTransition(reduceMotion) },
         label = "screens",
     ) { s ->
@@ -298,8 +426,7 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
             InventoryScreen(
                 vm = vm, secrets = secrets, onBack = ::back,
                 onScan = { screen = Screen.Scan },
-                onProjects = { screen = Screen.Projects },
-                onLocations = { screen = Screen.Locations },
+                onPartPage = { partPageOpen = it },
                 bin = s.bin,
                 onClearBin = { screen = Screen.Inventory() },
                 prefs = prefs,
@@ -329,6 +456,21 @@ private fun App(prefs: Prefs, db: InventoryDb, secrets: SecretStore) {
         Modifier.align(Alignment.BottomCenter).navigationBarsPadding().imePadding().padding(bottom = 8.dp),
     )
     }
+    if (showBar && !rail) {
+        NavigationBar {
+            Tab.entries.forEach { t ->
+                NavigationBarItem(
+                    selected = t == tab,
+                    modifier = Modifier.testTag("tab-${t.name}"),
+                    onClick = { goTo(t) },
+                    icon = { Icon(t.icon, contentDescription = null) },
+                    label = { Text(t.label) },
+                )
+            }
+        }
+    }
+    }
+    }
 }
 
 private fun Screen.depth(): Int = when (this) {
@@ -339,6 +481,8 @@ private fun Screen.depth(): Int = when (this) {
 
 private fun AnimatedContentTransitionScope<Screen>.screenTransition(reduceMotion: Boolean): ContentTransform {
     if (reduceMotion) return EnterTransition.None togetherWith ExitTransition.None
+    // Switching between bottom-bar tabs fades through; going deeper slides.
+    if (initialState.tab() != null && targetState.tab() != null) return fadeIn(tween(220)) togetherWith fadeOut(tween(120))
     val dir = if (targetState.depth() >= initialState.depth()) 1 else -1
     return (slideInHorizontally(tween(300)) { w -> dir * w / 5 } + fadeIn(tween(300))) togetherWith
         (slideOutHorizontally(tween(300)) { w -> -dir * w / 5 } + fadeOut(tween(150)))
