@@ -21,11 +21,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableIntStateOf
@@ -96,6 +99,9 @@ object PartPhotos {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount
     }
 
+    /** The thumbnail if it is already in the memory cache (no disk access), so it can show without fading in. */
+    fun cachedThumbnail(name: String, px: Int): Bitmap? = thumbs.get("$name@$px")
+
     /** A small copy (about [px] px) for lists, cached; null if the file is missing (e.g. after a backup restore). */
     fun thumbnail(context: Context, name: String, px: Int): Bitmap? {
         val key = "$name@$px"
@@ -122,14 +128,27 @@ object PartPhotos {
     }
 }
 
-/** Square thumbnail of a part photo, loaded off the main thread. Shows nothing if the file is missing. */
+/**
+ * Square thumbnail of a part photo, loaded off the main thread. Shows nothing if the file is missing. One that had to be
+ * decoded fades in; one already in the memory cache shows straight away (and nothing fades with "Remove animations").
+ */
 @Composable
-fun PhotoThumb(name: String, size: Dp, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
+fun PhotoThumb(
+    name: String,
+    size: Dp,
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+    contentDescription: String? = "Part photo",
+) {
     val context = LocalContext.current
     val px = with(androidx.compose.ui.platform.LocalDensity.current) { size.roundToPx() }
-    val image by produceState<ImageBitmap?>(null, name, px) {
-        value = withContext(Dispatchers.IO) { PartPhotos.thumbnail(context, name, px)?.asImageBitmap() }
+    val cached = remember(name, px) { PartPhotos.cachedThumbnail(name, px)?.asImageBitmap() }
+    val image by produceState(cached, name, px) {
+        if (value == null) value = withContext(Dispatchers.IO) { PartPhotos.thumbnail(context, name, px)?.asImageBitmap() }
     }
+    val reduceMotion = rememberReduceMotion()
+    val alpha = remember(name, px) { Animatable(if (cached != null || reduceMotion) 1f else 0f) }
+    LaunchedEffect(image != null) { if (image != null) alpha.animateTo(1f, tween(250)) }
     val shape = RoundedCornerShape(6.dp)
     Box(
         modifier
@@ -138,7 +157,12 @@ fun PhotoThumb(name: String, size: Dp, modifier: Modifier = Modifier, onClick: (
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .let { if (onClick != null) it.clickable(onClick = onClick) else it },
     ) {
-        image?.let { Image(it, contentDescription = "Part photo", contentScale = ContentScale.Crop, modifier = Modifier.size(size)) }
+        image?.let {
+            Image(
+                it, contentDescription = contentDescription, contentScale = ContentScale.Crop,
+                modifier = Modifier.size(size).graphicsLayer { this.alpha = alpha.value },
+            )
+        }
     }
 }
 
@@ -155,7 +179,8 @@ fun PartPhotosRow(db: InventoryDb, partId: Long, onChanged: () -> Unit = {}) {
     val photos by produceState(emptyList<PartPhoto>(), change, partId) {
         value = withContext(Dispatchers.IO) { db.photos(partId) }
     }
-    var viewing by remember { mutableStateOf<PartPhoto?>(null) }
+    // Index of the photo open in the full-screen viewer.
+    var viewing by remember { mutableStateOf<Int?>(null) }
     var busy by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf<String?>(null) }
 
@@ -184,7 +209,7 @@ fun PartPhotosRow(db: InventoryDb, partId: Long, onChanged: () -> Unit = {}) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (photos.isNotEmpty()) {
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                photos.forEach { p -> PhotoThumb(p.file, 64.dp, onClick = { viewing = p }) }
+                photos.forEachIndexed { i, p -> PhotoThumb(p.file, 64.dp, onClick = { viewing = i }) }
             }
         }
         Row {
@@ -194,30 +219,21 @@ fun PartPhotosRow(db: InventoryDb, partId: Long, onChanged: () -> Unit = {}) {
         msg?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
     }
 
-    viewing?.let { p ->
-        fun delete() {
-            viewing = null
-            scope.launch {
-                withContext(Dispatchers.IO) { db.deletePhoto(p.id) }
-                onChanged()
-            }
-        }
-        // null = still loading; a missing file (e.g. after restoring the app from a cloud backup) can be removed.
-        val loaded by produceState<Pair<Bitmap?, Boolean>?>(null, p.file) {
-            value = withContext(Dispatchers.IO) { PartPhotos.full(context, p.file) to true }
-        }
-        val bmp = loaded?.first
-        if (bmp != null) {
-            PhotoViewer(bmp, onDismiss = { viewing = null }, description = "Part photo", onDelete = ::delete)
-        } else if (loaded != null) {
-            AlertDialog(
-                onDismissRequest = { viewing = null },
-                title = { Text("Photo missing") },
-                text = { Text("This photo's file isn't on the phone any more (photos aren't in Android cloud backups).") },
-                confirmButton = { TextButton(onClick = ::delete) { Text("Remove it") } },
-                dismissButton = { TextButton(onClick = { viewing = null }) { Text("Cancel") } },
-            )
-        }
+    val start = viewing
+    if (start != null && photos.isNotEmpty()) {
+        PartPhotoPager(
+            photos = photos,
+            start = start.coerceIn(0, photos.lastIndex),
+            onDismiss = { viewing = null },
+            onDelete = { p ->
+                // The viewer stays open on the next photo; it closes with the last one.
+                if (photos.size <= 1) viewing = null
+                scope.launch {
+                    withContext(Dispatchers.IO) { db.deletePhoto(p.id) }
+                    onChanged()
+                }
+            },
+        )
     }
 }
 

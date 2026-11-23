@@ -116,6 +116,16 @@ fun InventoryList(
     unpricedBadge: Boolean = false,
 ) {
     val context = LocalContext.current
+    if (!view.loaded) {
+        // Placeholders shaped like the tiles and rows, instead of a blank list that pops in. Kept out of the LazyColumn,
+        // so its saved scroll position isn't spent on the placeholders and comes back once the parts are there.
+        Column(modifier.fillMaxSize().padding(contentPadding)) {
+            header()
+            SkeletonStatTiles(animate, Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+            SkeletonPartRows(animate, Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+        }
+        return
+    }
     LazyColumn(
         state = listState,
         contentPadding = contentPadding,

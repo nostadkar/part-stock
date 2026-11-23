@@ -1,6 +1,10 @@
 package com.partstock.scanner
 
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -274,17 +278,23 @@ private fun BatchItemCard(c: BatchCard, onClick: () -> Unit, onRemove: () -> Uni
                     )
                 }
             }
-            Icon(
-                Icons.Filled.Close,
-                contentDescription = "Remove from batch",
-                modifier = Modifier
+            // A 48dp touch target around the same small ×, nudged into the corner so it looks as before.
+            Box(
+                Modifier
                     .align(Alignment.TopEnd)
-                    .padding(4.dp)
-                    .size(24.dp)
-                    .clickable(onClick = onRemove)
-                    .padding(4.dp),
-                tint = content.copy(alpha = 0.7f),
-            )
+                    .offset(x = 8.dp, y = (-8).dp)
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .clickable(role = Role.Button, onClick = onRemove),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "Remove from batch",
+                    modifier = Modifier.size(16.dp),
+                    tint = content.copy(alpha = 0.7f),
+                )
+            }
         }
     }
 }

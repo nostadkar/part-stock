@@ -145,7 +145,10 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   are highlighted). **Swipe a row right to use 1, left to add 1** (Undo in the message). Tap a part for its full-screen
   page: photos, a big count with − / +, *Datasheet*, *Open on Mouser/DigiKey*, *Use…*, *Move*, *Label*, *History*, and
   sections for stock by bin, price, specs, identifiers and notes. The pencil edits them in place; ⋮ → *Delete part*.
-  Transitions follow the system *Remove animations* setting.
+  Tap a photo for the full-screen viewer: swipe between the part's photos ("2 / 4", thumbnails along the bottom),
+  pinch or double-tap to zoom, *Delete* (tap twice) removes the one on screen. While the inventory loads, grey
+  placeholder rows show instead of a blank list; thumbnails fade in as they're read.
+  Transitions follow the system *Remove animations* setting (placeholders then stay still).
 - **Using parts**: − on a part's page uses one, *Use…* asks how many; the count drops and the scan log gets a
   negative "use" entry. **Build kit** (⋮ menu on the Inventory screen): pick a kit, enter the number of boards,
   check the list (each part has the same coverage bar, and a "Short for N boards" chart shows what runs out), then *Use parts* subtracts per board × boards from every
