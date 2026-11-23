@@ -105,6 +105,8 @@ fun InventoryList(
     header: @Composable () -> Unit = {},
     overviewOpen: Boolean = true,
     overviewByValue: Boolean = false,
+    /** Wide and short (a phone in landscape): stat tiles and the Overview card share one row. */
+    sideBySide: Boolean = false,
 ) {
     val context = LocalContext.current
     LazyColumn(
@@ -113,11 +115,28 @@ fun InventoryList(
         modifier = modifier.fillMaxSize(),
     ) {
         item(key = "header") { header() }
-        item(key = "stats") {
-            StatTiles(view, lowOnly, onLow = actions.toggleLow, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+        val withOverview = view.loaded && view.parts.isNotEmpty() // hidden while loading and with an empty inventory
+        if (sideBySide && withOverview) {
+            item(key = "stats") {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    StatTiles(view, lowOnly, onLow = actions.toggleLow, modifier = Modifier.weight(1f))
+                    OverviewCard(
+                        view = view, bucket = bucket, open = overviewOpen, byValue = overviewByValue,
+                        onToggleOpen = actions.toggleOverview, onByValue = actions.setOverviewByValue,
+                        onCategory = actions.setBucket,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+        } else {
+            item(key = "stats") {
+                StatTiles(view, lowOnly, onLow = actions.toggleLow, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+            }
         }
-        // Hidden while loading and with an empty inventory.
-        if (view.loaded && view.parts.isNotEmpty()) {
+        if (withOverview && !sideBySide) {
             item(key = "overview") {
                 OverviewCard(
                     view = view, bucket = bucket, open = overviewOpen, byValue = overviewByValue,

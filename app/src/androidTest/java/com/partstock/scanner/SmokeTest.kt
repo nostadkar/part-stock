@@ -1,6 +1,8 @@
 package com.partstock.scanner
 
 import android.Manifest
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -106,6 +108,48 @@ class SmokeTest {
         )
         walkScreens(3)
         openPartPage("LM358DR")
+    }
+
+    /** Landscape: Scan and Inventory open, a part page opens, and rotating back keeps that page open. */
+    @Test
+    fun landscape() {
+        launch(
+            listOf(
+                part("RC0603FR-0710KL", 500, "A1", "RES 10K OHM 1% 1/10W 0603"),
+                part("LM358DR", 3, "B1", "IC OPAMP GP 2 CIRCUIT 8SOIC"),
+            ),
+        )
+        rotate(Configuration.ORIENTATION_LANDSCAPE)
+        compose.onNodeWithContentDescription("Read label").assertExists()
+        compose.onNodeWithText("Inventory (2)").assertIsDisplayed().performClick()
+        compose.waitForIdle()
+        compose.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasText("LM358DR"))
+        compose.waitForIdle()
+        compose.onAllNodesWithText("LM358DR").onFirst().performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Stock over time").assertExists()
+        rotate(Configuration.ORIENTATION_PORTRAIT)
+        compose.onNodeWithText("Stock over time").assertExists() // still on the part page after rotating
+        Espresso.pressBack()
+        compose.waitForIdle()
+        Espresso.pressBack()
+        compose.waitForIdle()
+    }
+
+    private fun rotate(orientation: Int) {
+        scenario!!.onActivity {
+            it.requestedOrientation = if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
+                ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            } else {
+                ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            }
+        }
+        compose.waitUntil(10_000) {
+            var now = 0
+            scenario!!.onActivity { now = it.resources.configuration.orientation }
+            now == orientation
+        }
+        compose.waitForIdle()
     }
 
     /** Scan → Inventory → part page (with its Stock over time card) → back → back. */
