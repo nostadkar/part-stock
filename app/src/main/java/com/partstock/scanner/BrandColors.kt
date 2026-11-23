@@ -1,16 +1,21 @@
 package com.partstock.scanner
 
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import com.partstock.scanner.parse.ThemeMode
 
 /** App-wide theme switches, read by the theme so a change in Settings applies at once. */
 object AppTheme {
     /** Android 12+: colors from the wallpaper. Loaded from [Prefs.dynamicColor] at start. */
     var dynamicColor by mutableStateOf(true)
+
+    /** System / Light / Dark / Black. Loaded from [Prefs.themeMode] at start. */
+    var mode by mutableStateOf(ThemeMode.SYSTEM)
 }
 
 /**
@@ -87,5 +92,25 @@ object BrandColors {
         surfaceContainer = Color(0xFF1D2024),
         surfaceContainerHigh = Color(0xFF282A2F),
         surfaceContainerHighest = Color(0xFF33353A),
+    )
+
+    /**
+     * Black (OLED): [base] (a dark scheme, brand or wallpaper) on #000000, with containers stepped up from black and
+     * slightly brighter outlines so cards and fields stay distinguishable. Accents (navy/amber, error) are kept.
+     */
+    fun black(base: ColorScheme): ColorScheme = base.copy(
+        background = Color.Black,
+        surface = Color.Black,
+        surfaceDim = Color.Black,
+        surfaceBright = Color(0xFF2A2C30),
+        surfaceContainerLowest = Color.Black,
+        surfaceContainerLow = Color(0xFF131519),
+        surfaceContainer = Color(0xFF191B1F),
+        surfaceContainerHigh = Color(0xFF1E2024),
+        surfaceContainerHighest = Color(0xFF282A2F),
+        surfaceVariant = Color(0xFF2E3238),
+        outline = Color(0xFFA0A4AC),
+        outlineVariant = Color(0xFF52565E),
+        inverseOnSurface = Color(0xFF1E2024),
     )
 }

@@ -63,7 +63,9 @@ part and list position (an unsaved review comes back as Scan; batch bags stay in
 
 **Look**: an adaptive launcher icon (a chip in a parts bin inside scan brackets, vector only) with a monochrome layer for
 Android 13 themed icons, and a matching splash screen at launch. On Android 12+ the app takes its colors from the
-wallpaper; Settings → *Wallpaper colors* off (or Android 8–11) uses Part Stock's own navy and amber.
+wallpaper; Settings → Appearance → *Wallpaper colors* off (or Android 8–11) uses Part Stock's own navy and amber.
+*Theme* (same card) is System (follows the phone's dark mode), Light, Dark or Black (#000000 backgrounds for OLED, with
+slightly brighter outlines); it applies at once and the status- and navigation-bar icons follow it.
 
 ## Links, cost and the Mouser API key
 
@@ -280,6 +282,7 @@ app/src/main/java/com/partstock/scanner/
   ProjectCards.kt            Projects list card: segmented BOM bar, state chip, blocking-part chips
   parse/BomCsv.java          BOM CSV reading, KiCad and generic (pure Java, unit tested)
   parse/BuildPlan.java       BOM matching, buildable count, per-line coverage and shortage maths (pure Java, unit tested)
+  parse/ThemeMode.java       Theme choice System / Light / Dark / Black (pure Java, unit tested)
   parse/PartSort.java        Inventory sort orders and List / Compact / Grid views (pure Java, unit tested)
   parse/ProjectStatus.java   Projects list card: line counts, blockers, state chip and sort (pure Java, unit tested)
   parse/OrderCsv.java        Order CSV column mapping (pure Java, unit tested)

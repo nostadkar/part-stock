@@ -21,6 +21,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Backup
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.VpnKey
@@ -35,6 +36,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -50,6 +54,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.selection.selectable
+import com.partstock.scanner.parse.ThemeMode
 import com.partstock.scanner.parse.InventoryCsv
 import com.partstock.scanner.parse.SettingsStatus
 import com.partstock.scanner.parse.SyncStatus
@@ -319,7 +324,7 @@ fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: 
                 dkStatus?.let { StatusLine(it) }
             }
 
-            SettingsCard("scanning", Icons.Filled.QrCodeScanner, "Scanning & look", prefs, collapsible = false) {
+            SettingsCard("scanning", Icons.Filled.QrCodeScanner, "Scanning", prefs, collapsible = false) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     // The whole row toggles, so TalkBack reads the title with the switch and the target is big.
@@ -339,6 +344,33 @@ fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: 
                     }
                     Switch(checked = readBarcodes, onCheckedChange = null)
                 }
+            }
+
+            SettingsCard("appearance", Icons.Filled.Palette, "Appearance", prefs, collapsible = false) {
+                Text("Theme", style = MaterialTheme.typography.bodyLarge)
+                val modes = ThemeMode.entries
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    modes.forEachIndexed { i, m ->
+                        SegmentedButton(
+                            selected = AppTheme.mode == m,
+                            onClick = {
+                                AppTheme.mode = m
+                                prefs.themeMode = m.name
+                            },
+                            shape = SegmentedButtonDefaults.itemShape(i, modes.size),
+                        ) { Text(m.label, maxLines = 1) }
+                    }
+                }
+                Text(
+                    when (AppTheme.mode) {
+                        ThemeMode.SYSTEM -> "Follows the phone's dark mode."
+                        ThemeMode.LIGHT -> "Always light."
+                        ThemeMode.DARK -> "Always dark, e.g. in the workshop at night."
+                        else -> "True black backgrounds: saves power on OLED screens."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,

@@ -131,4 +131,9 @@ class Prefs(context: Context) {
     var inventoryView: String
         get() = sp.getString("inventoryView", "LIST") ?: "LIST"
         set(v) = sp.edit().putString("inventoryView", v).apply()
+
+    /** Settings → Appearance → Theme: a ThemeMode name (System, Light, Dark, Black). */
+    var themeMode: String
+        get() = sp.getString("themeMode", "SYSTEM") ?: "SYSTEM"
+        set(v) = sp.edit().putString("themeMode", v).apply()
 }

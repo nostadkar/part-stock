@@ -6,9 +6,11 @@ import android.os.Build
 import android.os.Bundle
 import android.os.StrictMode
 import android.widget.Toast
+import android.graphics.Color as AndroidColor
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.animation.AnimatedContent
@@ -83,6 +85,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import com.partstock.scanner.parse.ThemeMode
 import com.partstock.scanner.parse.LabelBarcode
 import com.partstock.scanner.parse.LabelCodes
 import com.partstock.scanner.parse.Locations
@@ -103,6 +106,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         val prefs = Prefs(this)
         AppTheme.dynamicColor = prefs.dynamicColor
+        AppTheme.mode = ThemeMode.parse(prefs.themeMode)
         val db = InventoryDb(applicationContext)
         val secrets = SecretStore(applicationContext)
         db.onChanged = {
@@ -498,13 +502,30 @@ private fun AnimatedContentTransitionScope<Screen>.screenTransition(reduceMotion
 
 @Composable
 private fun PartStockTheme(content: @Composable () -> Unit) {
-    val dark = isSystemInDarkTheme()
+    val mode = AppTheme.mode
+    val dark = mode.isDark(isSystemInDarkTheme())
     val context = LocalContext.current
-    val scheme = when {
+    val base = when {
         AppTheme.dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
             if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         dark -> BrandColors.dark
         else -> BrandColors.light
     }
+    val scheme = if (mode.isBlack()) BrandColors.black(base) else base
+    // Status- and navigation-bar icons follow the app's theme, not the phone's dark mode (they differ when the theme
+    // is forced in Settings → Appearance). Re-applied whenever it flips.
+    val activity = context as? ComponentActivity
+    LaunchedEffect(activity, dark) {
+        activity?.enableEdgeToEdge(
+            statusBarStyle = if (dark) SystemBarStyle.dark(AndroidColor.TRANSPARENT)
+            else SystemBarStyle.light(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT),
+            navigationBarStyle = if (dark) SystemBarStyle.dark(NAV_SCRIM_DARK)
+            else SystemBarStyle.light(NAV_SCRIM_LIGHT, NAV_SCRIM_DARK),
+        )
+    }
     MaterialTheme(colorScheme = scheme, content = content)
 }
+
+/** The scrims enableEdgeToEdge() uses behind 3-button navigation by default. */
+private val NAV_SCRIM_LIGHT = AndroidColor.argb(0xE6, 0xFF, 0xFF, 0xFF)
+private val NAV_SCRIM_DARK = AndroidColor.argb(0x80, 0x1B, 0x1B, 0x1B)
