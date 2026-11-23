@@ -8,6 +8,17 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
+import com.partstock.scanner.parse.SaveOutcome
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -34,7 +45,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -468,6 +478,37 @@ fun ReviewScreen(
     val summary = FieldStatus.summary(ordered, filled)
     val firstCheck = FieldStatus.firstToCheck(ordered)
 
+    // "More details" (description, manufacturer, cost, customer PN, link, notes) starts folded; it opens by itself
+    // when one of those needs a look: flagged "check this", or filled in by a lookup to confirm.
+    var detailsOpen by remember { mutableStateOf(false) }
+    val detailsNeedLook = DETAIL_FIELDS.any {
+        val k = status.getValue(it).kind
+        k == FieldStatus.Kind.CHECK || k == FieldStatus.Kind.LOOKED_UP
+    } || priceSource.isNotBlank() || lookupMsg != null
+    LaunchedEffect(detailsNeedLook) { if (detailsNeedLook) detailsOpen = true }
+    // A field to focus once "More details" has opened (its FocusRequester isn't attached while folded).
+    var pendingFocus by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(pendingFocus, detailsOpen) {
+        val f = pendingFocus ?: return@LaunchedEffect
+        if (!detailsOpen) return@LaunchedEffect
+        withFrameNanos { }
+        runCatching { focus.getValue(f).requestFocus() }
+        pendingFocus = null
+    }
+    fun focusField(f: String) {
+        if (f in DETAIL_FIELDS && !detailsOpen) {
+            detailsOpen = true
+            pendingFocus = f
+        } else {
+            runCatching { focus.getValue(f).requestFocus() }
+        }
+    }
+    val outcome = SaveOutcome.preview(
+        hasKey, qty.trim().toIntOrNull(), addMode, location, row?.quantity,
+        row?.let { Locations.qtyIn(it.bins(), Locations.normalize(location.ifBlank { it.location })) } ?: 0,
+        row?.location.orEmpty(),
+    )
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -477,6 +518,16 @@ fun ReviewScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Rescan")
                     }
                 },
+                actions = { TextButton(onClick = onCancel) { Text("Rescan") } },
+            )
+        },
+        bottomBar = {
+            SaveBar(
+                outcome = outcome,
+                error = error,
+                saving = saving,
+                addMode = addMode,
+                onSave = ::save,
             )
         },
     ) { padding ->
@@ -484,6 +535,7 @@ fun ReviewScreen(
             Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .consumeWindowInsets(padding)
                 .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp),
@@ -496,6 +548,9 @@ fun ReviewScreen(
                 )
                 if (part.refDesCount > 0) AssistChip(onClick = {}, label = { Text("${part.refDesCount} ref des") })
             }
+
+            seenBag?.let { DuplicateBagCard(it) }
+            StockBanner(existing, hasKey, qty.trim().toIntOrNull(), addMode, location)
 
             if (thumb != null) {
                 // Which line each field's value came from, kept up to date as fields change.
@@ -514,64 +569,49 @@ fun ReviewScreen(
                     boxes = photoBoxes,
                     sources = sources,
                     highlight = focusedField,
-                    onUseLine = { i, f -> photoBoxes.getOrNull(i)?.let { applyRescan(f, listOf(it), fromPhoto = true) } },
+                    onUseLine = { i, f ->
+                        if (f == FieldReader.Field.DESCRIPTION || f == FieldReader.Field.CUSTOMER_PN) detailsOpen = true
+                        photoBoxes.getOrNull(i)?.let { applyRescan(f, listOf(it), fromPhoto = true) }
+                    },
                     onZoom = { showPhoto = true },
                 )
             }
             rescanMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
             if (summary.isNotBlank()) {
                 StatusSummary(summary, toCheck = firstCheck >= 0) {
-                    if (firstCheck >= 0) focus.getValue(STATUS_FIELDS[firstCheck]).requestFocus()
+                    if (firstCheck >= 0) focusField(STATUS_FIELDS[firstCheck])
                 }
             }
 
-            seenBag?.let { DuplicateBagCard(it) }
-            StockBanner(existing, hasKey, qty.trim().toIntOrNull(), addMode, location)
-
+            // The fields almost every save touches: part number, quantity, bin, add / set.
             Field("Manufacturer part number", mpn, { mpn = it }, mono = true,
                 capitalization = KeyboardCapitalization.Characters,
                 onFocus = { focusChanged(FieldReader.Field.MPN, it) },
                 status = status.getValue(LabelBarcode.F_MPN), change = changes[LabelBarcode.F_MPN],
                 focus = focus.getValue(LabelBarcode.F_MPN),
                 onRescan = { rescan = FieldReader.Field.MPN })
-            Field("Description", description, { description = it }, singleLine = false,
-                onFocus = { focusChanged(FieldReader.Field.DESCRIPTION, it) },
-                status = status.getValue(F_DESCRIPTION), change = changes[F_DESCRIPTION],
-                focus = focus.getValue(F_DESCRIPTION),
-                onRescan = { rescan = FieldReader.Field.DESCRIPTION })
-            val specs = remember(description, apiSpecs) { apiSpecs.orElse(PartSpecs.fromDescription(description)) }
-            if (!specs.isEmpty || datasheetUrl.isNotBlank()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    SpecChips(specs.chips(), Modifier.weight(1f), pkg = specs.pkg)
-                    if (datasheetUrl.isNotBlank()) {
-                        TextButton(onClick = { openLink(context, datasheetUrl) }) { Text("Datasheet") }
+            Field(
+                (part.distributor ?: "Distributor") + " part number", distributorPn, { distributorPn = it }, mono = true,
+                capitalization = KeyboardCapitalization.Characters,
+                onFocus = { focusChanged(FieldReader.Field.DISTRIBUTOR_PN, it) },
+                status = status.getValue(LabelBarcode.F_DIST_PN), change = changes[LabelBarcode.F_DIST_PN],
+                focus = focus.getValue(LabelBarcode.F_DIST_PN),
+                onRescan = { rescan = FieldReader.Field.DISTRIBUTOR_PN },
+            )
+            NumberField(
+                value = qty,
+                onValueChange = { v -> qty = v.filter { it.isDigit() } },
+                label = "Quantity",
+                supportingText = statusText(status.getValue(LabelBarcode.F_QTY), changes[LabelBarcode.F_QTY]),
+                trailingIcon = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        StatusIcon(status.getValue(LabelBarcode.F_QTY))
+                        RescanIcon("quantity") { rescan = FieldReader.Field.QUANTITY }
                     }
-                }
-            }
-            CategoryPicker(category, description = listOf(description, notes).joinToString(" ")) {
-                category = it
-                categoryPicked = true
-            }
-            Field("Manufacturer", manufacturer, { manufacturer = it },
-                status = status.getValue(F_MANUFACTURER), change = changes[F_MANUFACTURER],
-                focus = focus.getValue(F_MANUFACTURER))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                NumberField(
-                    value = qty,
-                    onValueChange = { v -> qty = v.filter { it.isDigit() } },
-                    label = "Quantity",
-                    supportingText = statusText(status.getValue(LabelBarcode.F_QTY), changes[LabelBarcode.F_QTY]),
-                    trailingIcon = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            StatusIcon(status.getValue(LabelBarcode.F_QTY))
-                            RescanIcon("quantity") { rescan = FieldReader.Field.QUANTITY }
-                        }
-                    },
-                    modifier = Modifier.weight(1f).focusRequester(focus.getValue(LabelBarcode.F_QTY))
-                        .onFocusChanged { focusChanged(FieldReader.Field.QUANTITY, it.isFocused) },
-                )
-            }
+                },
+                modifier = Modifier.fillMaxWidth().focusRequester(focus.getValue(LabelBarcode.F_QTY))
+                    .onFocusChanged { focusChanged(FieldReader.Field.QUANTITY, it.isFocused) },
+            )
             BinPicker(location, { location = it }, modifier = Modifier.fillMaxWidth())
 
             KitHint(part) { qty = it.toString() }
@@ -581,89 +621,116 @@ fun ReviewScreen(
                 FilterChip(selected = !addMode, onClick = { addMode = false }, label = { Text("Set count to this") })
             }
 
-            NumberField(
-                value = unitCost,
-                onValueChange = { v ->
-                    unitCost = v.filter { it.isDigit() || it == '.' }
-                    priceSource = ""
-                },
-                label = "Unit cost (each)",
-                decimal = true,
-                prefix = { Text("$") },
-                supportingText = {
-                    val total = unitCost.toDoubleOrNull()?.let { c -> qty.toIntOrNull()?.let { n -> c * n } }
-                    Text(if (total != null) "This entry: \$${InventoryDb.fmtMoney(total)}" else "Labels don't print a price")
-                },
-                modifier = Modifier.fillMaxWidth(),
+            val detailsFilled = buildList {
+                if (description.isNotBlank()) add("Description")
+                if (manufacturer.isNotBlank()) add("Manufacturer")
+                unitCost.toDoubleOrNull()?.let { add("\$" + unitCost) }
+                if (customerPn.isNotBlank()) add("Customer PN")
+                if (notes.isNotBlank()) add("Notes")
+            }
+            DetailsHeader(
+                open = detailsOpen,
+                filled = detailsFilled,
+                toCheck = DETAIL_FIELDS.any { status.getValue(it).kind == FieldStatus.Kind.CHECK },
+                onToggle = { detailsOpen = !detailsOpen },
             )
-            if (looking) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+            if (detailsOpen) {
+                Field("Description", description, { description = it }, singleLine = false,
+                    onFocus = { focusChanged(FieldReader.Field.DESCRIPTION, it) },
+                    status = status.getValue(F_DESCRIPTION), change = changes[F_DESCRIPTION],
+                    focus = focus.getValue(F_DESCRIPTION),
+                    onRescan = { rescan = FieldReader.Field.DESCRIPTION })
+                val specs = remember(description, apiSpecs) { apiSpecs.orElse(PartSpecs.fromDescription(description)) }
+                if (!specs.isEmpty || datasheetUrl.isNotBlank()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SpecChips(specs.chips(), Modifier.weight(1f), pkg = specs.pkg)
+                        if (datasheetUrl.isNotBlank()) {
+                            TextButton(onClick = { openLink(context, datasheetUrl) }) { Text("Datasheet") }
+                        }
+                    }
+                }
+                CategoryPicker(category, description = listOf(description, notes).joinToString(" ")) {
+                    category = it
+                    categoryPicked = true
+                }
+                Field("Manufacturer", manufacturer, { manufacturer = it },
+                    status = status.getValue(F_MANUFACTURER), change = changes[F_MANUFACTURER],
+                    focus = focus.getValue(F_MANUFACTURER))
+
+                // Cost, with the lookups beside it and their result just below.
+                Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    NumberField(
+                        value = unitCost,
+                        onValueChange = { v ->
+                            unitCost = v.filter { it.isDigit() || it == '.' }
+                            priceSource = ""
+                        },
+                        label = "Unit cost (each)",
+                        decimal = true,
+                        prefix = { Text("$") },
+                        supportingText = {
+                            val total = unitCost.toDoubleOrNull()?.let { c -> qty.toIntOrNull()?.let { n -> c * n } }
+                            Text(if (total != null) "This entry: \$${InventoryDb.fmtMoney(total)}" else "Labels don't print a price")
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                    Column(Modifier.padding(top = 8.dp)) {
+                        if (isDigiKeyLabel && digiKey != null) {
+                            LookupButton("DigiKey", busy = looking && lookingAt == "DigiKey", enabled = !looking, onClick = ::lookupDigiKey)
+                        }
+                        if (mouserKey != null) {
+                            LookupButton("Mouser", busy = looking && lookingAt == "Mouser", enabled = !looking) { lookupMouser() }
+                        }
+                    }
+                }
+                if (looking) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Text(
+                            if (lookingAt.isNotBlank()) "Checking $lookingAt…" else "Checking…",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                lookupMsg?.let { LookupResultChip(it, found = priceSource.isNotBlank() || it.startsWith("Found on")) }
+                if (isDigiKeyLabel && digiKey == null && mouserKey == null) {
                     Text(
-                        if (lookingAt.isNotBlank()) "Checking $lookingAt…" else "Checking…",
+                        "Add DigiKey API credentials in Settings to fill in the price automatically.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else if (!isDigiKeyLabel && mouserKey == null) {
+                    Text(
+                        "Add a Mouser API key in Settings to fill in the price automatically.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-            }
-            if (isDigiKeyLabel && digiKey != null) {
-                OutlinedButton(onClick = ::lookupDigiKey, enabled = !looking, modifier = Modifier.fillMaxWidth()) {
-                    if (looking) CircularProgressIndicator(Modifier.size(18.dp)) else Text("Look up on DigiKey")
+                if (link != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            link,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { openLink(context, link) }) { Text("Open on ${Links.siteName(link)}") }
+                    }
                 }
-            } else if (isDigiKeyLabel && mouserKey == null) {
-                Text(
-                    "Add DigiKey API credentials in Settings to fill in the price automatically.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            if (mouserKey != null) {
-                OutlinedButton(onClick = { lookupMouser() }, enabled = !looking, modifier = Modifier.fillMaxWidth()) {
-                    if (looking) CircularProgressIndicator(Modifier.size(18.dp)) else Text("Look up price on Mouser")
-                }
-            } else if (!isDigiKeyLabel) {
-                Text(
-                    "Add a Mouser API key in Settings to fill in the price automatically.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            lookupMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-            if (link != null) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        link,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(onClick = { openLink(context, link) }) { Text("Open on ${Links.siteName(link)}") }
+
+                Field("Customer / Entrust PN", customerPn, { customerPn = it }, mono = true,
+                    capitalization = KeyboardCapitalization.Characters,
+                    onFocus = { focusChanged(FieldReader.Field.CUSTOMER_PN, it) },
+                    status = status.getValue(LabelBarcode.F_CUST_PN), change = changes[LabelBarcode.F_CUST_PN],
+                    focus = focus.getValue(LabelBarcode.F_CUST_PN),
+                    onRescan = { rescan = FieldReader.Field.CUSTOMER_PN })
+                Field("Notes", notes, { notes = it }, singleLine = false, imeAction = ImeAction.Done)
+                part.dateCode?.takeIf { it.isNotBlank() }?.let {
+                    Text("Date code: $it", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-
-            Field(
-                (part.distributor ?: "Distributor") + " part number", distributorPn, { distributorPn = it }, mono = true,
-                capitalization = KeyboardCapitalization.Characters,
-                onFocus = { focusChanged(FieldReader.Field.DISTRIBUTOR_PN, it) },
-                status = status.getValue(LabelBarcode.F_DIST_PN), change = changes[LabelBarcode.F_DIST_PN],
-                focus = focus.getValue(LabelBarcode.F_DIST_PN),
-                onRescan = { rescan = FieldReader.Field.DISTRIBUTOR_PN },
-            )
-            Field("Customer / Entrust PN", customerPn, { customerPn = it }, mono = true,
-                capitalization = KeyboardCapitalization.Characters,
-                onFocus = { focusChanged(FieldReader.Field.CUSTOMER_PN, it) },
-                status = status.getValue(LabelBarcode.F_CUST_PN), change = changes[LabelBarcode.F_CUST_PN],
-                focus = focus.getValue(LabelBarcode.F_CUST_PN),
-                onRescan = { rescan = FieldReader.Field.CUSTOMER_PN })
-            Field("Notes", notes, { notes = it }, singleLine = false, imeAction = ImeAction.Done)
-
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-
-            Button(onClick = ::save, enabled = !saving, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                if (saving) CircularProgressIndicator(Modifier.size(22.dp), color = MaterialTheme.colorScheme.onPrimary)
-                else Text(if (addMode) "Add to inventory" else "Set inventory count")
-            }
-            OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Rescan") }
 
             TextButton(onClick = { showRaw = !showRaw }) {
                 Text(if (showRaw) "Hide text read from label" else "Show text read from label")
@@ -671,7 +738,7 @@ fun ReviewScreen(
             if (showRaw) {
                 Text(part.rawText, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
             }
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(8.dp))
         }
     }
 
@@ -749,6 +816,103 @@ private fun StockBanner(existing: Match?, hasKey: Boolean, qty: Int?, addMode: B
     }
 }
 
+/** Sticky bar under the form: what the save will do, any error, and the Save button. */
+@Composable
+private fun SaveBar(outcome: String, error: String?, saving: Boolean, addMode: Boolean, onSave: () -> Unit) {
+    Surface(tonalElevation = 3.dp, shadowElevation = 6.dp) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .imePadding()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
+            Text(
+                outcome,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            )
+            Button(onClick = onSave, enabled = !saving, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                if (saving) CircularProgressIndicator(Modifier.size(22.dp), color = MaterialTheme.colorScheme.onPrimary)
+                else Text(if (addMode) "Add to inventory" else "Set inventory count")
+            }
+        }
+    }
+}
+
+/** "More details" row: what's filled in while folded, a warning icon if something there needs a look. */
+@Composable
+private fun DetailsHeader(open: Boolean, filled: List<String>, toCheck: Boolean, onToggle: () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = MaterialTheme.shapes.small,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clickable(role = Role.Button, onClickLabel = if (open) "Hide details" else "Show details", onClick = onToggle),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("More details", style = MaterialTheme.typography.titleSmall)
+                if (!open) {
+                    Text(
+                        if (filled.isEmpty()) "Description, manufacturer, cost, notes" else filled.joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (toCheck) {
+                Icon(Icons.Outlined.ErrorOutline, contentDescription = "Needs a check",
+                    tint = statusColor(FieldStatus.Kind.CHECK), modifier = Modifier.size(20.dp))
+            }
+            Icon(if (open) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, contentDescription = null)
+        }
+    }
+}
+
+/** Icon-text "look up" button beside the cost field. */
+@Composable
+private fun LookupButton(site: String, busy: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    TextButton(onClick = onClick, enabled = enabled) {
+        if (busy) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+        else Icon(Icons.Outlined.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.size(6.dp))
+        Text(site)
+    }
+}
+
+/** The last lookup's result ("Mouser: USD 0.42 each at 1+") or why it failed. */
+@Composable
+private fun LookupResultChip(text: String, found: Boolean) {
+    val color = if (found) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant
+    Surface(color = color, shape = MaterialTheme.shapes.small) {
+        Row(
+            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                if (found) Icons.Outlined.CloudDone else Icons.Outlined.ErrorOutline,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = if (found) ChartColors.positive() else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(text, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
 /** Entrust kit labels print a per-board quantity and a kit count. */
 @Composable
 private fun KitHint(part: ParsedPart, onUse: (Int) -> Unit) {
@@ -792,9 +956,12 @@ private const val F_MANUFACTURER = "manufacturer"
 
 /** Fields that get a status line, in screen order (the summary jumps to the first one to check). */
 private val STATUS_FIELDS = listOf(
-    LabelBarcode.F_MPN, F_DESCRIPTION, F_MANUFACTURER, LabelBarcode.F_QTY, LabelBarcode.F_DIST_PN,
+    LabelBarcode.F_MPN, LabelBarcode.F_DIST_PN, LabelBarcode.F_QTY, F_DESCRIPTION, F_MANUFACTURER,
     LabelBarcode.F_CUST_PN,
 )
+
+/** Status fields inside the folded "More details" section. */
+private val DETAIL_FIELDS = setOf(F_DESCRIPTION, F_MANUFACTURER, LabelBarcode.F_CUST_PN)
 
 @Composable
 private fun statusColor(kind: FieldStatus.Kind): Color = when (kind) {
