@@ -70,6 +70,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.widthIn
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -269,6 +270,8 @@ private fun App(
     val vm: InventoryViewModel = viewModel { InventoryViewModel(db) }
     val inventory by vm.data.collectAsStateWithLifecycle()
     val partCount = inventory.parts.size
+    // The Settings card to open at (from Getting started); cleared when Settings closes.
+    var settingsFocus by remember { mutableStateOf<String?>(null) }
     // Batch scanning: the queue lives in a ViewModel (lookups keep running while a bag is reviewed) and in a file.
     val batch: BatchViewModel = viewModel { BatchViewModel(context.applicationContext, db, prefs, secrets) }
     val batchItems by batch.items.collectAsStateWithLifecycle()
@@ -417,7 +420,21 @@ private fun App(
         Screen.Scan -> ScanScreen(
             partCount = partCount,
             onInventory = { screen = Screen.Inventory() },
-            onSettings = { screen = Screen.Settings },
+            onSettings = {
+                settingsFocus = null
+                screen = Screen.Settings
+            },
+            underHint = {
+                GettingStartedCard(
+                    prefs = prefs, secrets = secrets, hasParts = inventory.parts.isNotEmpty(), loaded = inventory.loaded,
+                    onSettings = { id ->
+                        settingsFocus = id
+                        screen = Screen.Settings
+                    },
+                    compact = true,
+                    modifier = Modifier.widthIn(max = 480.dp),
+                )
+            },
             // Always read barcodes so the app's own QR labels work; label barcodes only count when that's on.
             readBarcodes = true,
             onFrames = { frames, photo, codes, boxes ->
@@ -501,7 +518,13 @@ private fun App(
 
         Screen.Settings -> {
             BackHandler { screen = Screen.Scan }
-            SettingsScreen(secrets = secrets, db = db, prefs = prefs, onDone = { screen = Screen.Scan })
+            SettingsScreen(
+                secrets = secrets, db = db, prefs = prefs, focus = settingsFocus,
+                onDone = {
+                    settingsFocus = null
+                    screen = Screen.Scan
+                },
+            )
         }
 
         is Screen.Inventory -> {
@@ -523,6 +546,10 @@ private fun App(
                 openPart = s.openPart,
                 startLowOnly = s.lowOnly,
                 startSearch = s.search,
+                onSettings = { id ->
+                    settingsFocus = id
+                    screen = Screen.Settings
+                },
             )
         }
 

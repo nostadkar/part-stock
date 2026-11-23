@@ -153,4 +153,14 @@ class Prefs(context: Context) {
     var themeMode: String
         get() = sp.getString("themeMode", "SYSTEM") ?: "SYSTEM"
         set(v) = sp.edit().putString("themeMode", v).apply()
+
+    /** Getting started card: "" = not decided yet, "active" = shown until complete, "off" = never (GettingStarted). */
+    var gettingStarted: String
+        get() = sp.getString("gettingStarted", "") ?: ""
+        set(v) = sp.edit().putString("gettingStarted", v).apply()
+
+    /** Getting started items the user skipped (GettingStarted.Item names). */
+    var gettingStartedSkipped: Set<String>
+        get() = sp.getStringSet("gettingStartedSkipped", null)?.toSet() ?: emptySet()
+        set(v) = sp.edit().putStringSet("gettingStartedSkipped", v.toSet()).apply()
 }

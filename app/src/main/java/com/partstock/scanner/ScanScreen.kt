@@ -113,6 +113,8 @@ fun ScanScreen(
     batchTop: @Composable () -> Unit = {},
     /** The queue, shown above the shutter in batch mode; [reading] = a capture is being read right now. */
     batchTray: @Composable (reading: Boolean) -> Unit = {},
+    /** Shown under the hint when not in batch mode (the Getting started card). */
+    underHint: @Composable () -> Unit = {},
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -368,6 +370,7 @@ fun ScanScreen(
                     if (hasCamera) {
                         Text(hint, textAlign = TextAlign.Center, style = MaterialTheme.typography.bodySmall)
                     }
+                    if (!batchMode) underHint()
                     if (batchMode) batchTray(busy)
                     torchButton()
                     shutter()
@@ -386,6 +389,7 @@ fun ScanScreen(
                     if (hasCamera) {
                         HintPill(hint)
                     }
+                    if (!batchMode) underHint()
                 }
 
                 Column(

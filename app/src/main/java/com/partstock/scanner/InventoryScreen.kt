@@ -94,6 +94,8 @@ fun InventoryScreen(
     startLowOnly: Boolean = false,
     /** Opened from the "Search" launcher shortcut: open the search field with the keyboard up. */
     startSearch: Boolean = false,
+    /** Opens Settings at a card (Getting started rows). */
+    onSettings: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
     val db = vm.db
@@ -487,6 +489,15 @@ fun InventoryScreen(
                 swipeHint = swipeHint,
                 viewMode = viewMode,
                 modifier = Modifier.padding(top = padding.calculateTopPadding()),
+                header = {
+                    if (prefs != null && bin == null) {
+                        GettingStartedCard(
+                            prefs = prefs, secrets = secrets, hasParts = data.parts.isNotEmpty(), loaded = data.loaded,
+                            onSettings = onSettings, onScan = onScan,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        )
+                    }
+                },
             )
         }
     }

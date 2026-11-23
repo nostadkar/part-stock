@@ -43,6 +43,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
@@ -70,7 +71,14 @@ import androidx.compose.ui.unit.dp
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: () -> Unit) {
+fun SettingsScreen(
+    secrets: SecretStore,
+    db: InventoryDb,
+    prefs: Prefs,
+    onDone: () -> Unit,
+    /** A card id to scroll to and highlight (from Getting started), or null. */
+    focus: String? = null,
+) {
     var key by remember { mutableStateOf("") }
     var saved by remember { mutableStateOf(secrets.hasMouserKey()) }
     var autoLookup by remember { mutableStateOf(prefs.autoMouserLookup) }
@@ -214,8 +222,15 @@ fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: 
         )
         val syncChip = SettingsStatus.sync(syncFile.isNotBlank(), prefs.syncLastOk, prefs.syncError, now)
         val appChip = SettingsStatus.app(Updater.currentBuild(context), latestKnown.toLong(), Updater.currentName(context))
+        val scroll = rememberScrollState()
+        var focusY by remember { mutableStateOf<Float?>(null) }
+        LaunchedEffect(focusY) {
+            focusY?.let { y -> if (scroll.value == 0) scroll.animateScrollTo(y.toInt().coerceAtLeast(0)) }
+        }
+        val settingsFocus = remember(focus) { focus?.let { id -> SettingsFocus(id) { y -> if (focusY == null) focusY = y } } }
+        CompositionLocalProvider(LocalSettingsFocus provides settingsFocus) {
         Column(
-            Modifier.fillMaxSize().padding(padding).imePadding().verticalScroll(rememberScrollState())
+            Modifier.fillMaxSize().padding(padding).imePadding().verticalScroll(scroll)
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -513,6 +528,14 @@ fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: 
                     },
                 ) { Text(if (checking) "Checking…" else "Check for updates") }
                 updateStatus?.let { StatusLine(it) }
+                var reopened by remember { mutableStateOf(false) }
+                OutlinedButton(
+                    enabled = !reopened,
+                    onClick = {
+                        reopenGettingStarted(prefs)
+                        reopened = true
+                    },
+                ) { Text(if (reopened) "Getting started is shown on Scan and Inventory" else "Getting started checklist") }
             }
 
             // Version and build number (the build number is the GitHub Actions run number).
@@ -523,6 +546,7 @@ fun SettingsScreen(secrets: SecretStore, db: InventoryDb, prefs: Prefs, onDone: 
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp),
             )
+        }
         }
     }
 }

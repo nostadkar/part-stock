@@ -249,6 +249,12 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
 - **Settings** is a column of cards, each with a status chip (Mouser and DigiKey "Key saved" / "Not set", backup
   age, amber after 7 days and red if the last one failed, file sync state, and "Update available"). Cards open and
   close with a tap and remember it; one with a problem opens by itself. The version and build number are at the bottom.
+- **Getting started** (new installs): a checklist card at the top of Inventory and under the hint on Scan (folded to
+  one line there) with a "2 of 4" progress ring: scan your first label, add a Mouser key, choose a backup folder, and
+  optional DigiKey keys / labels / order import. Items tick themselves off from the app's own checks; tap one to open
+  its Settings card (scrolled to and outlined), or *Skip* it. It goes away when everything is done or skipped, and
+  for good when you close it; Settings → App → *Getting started checklist* shows it again. Existing inventories with a
+  Mouser key or a backup folder never see it.
 - **Backup & restore** (Settings): *Restore from CSV* loads an inventory CSV exported by the app (older exports
   without Category / Unit Cost / Link work too). Choose *Merge* (rows are matched like a scan, quantities set from the
   file, other parts kept) or *Replace everything* (the scan log is kept); a summary like "42 parts: 30 new, 12 updated"

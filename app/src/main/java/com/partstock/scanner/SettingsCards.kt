@@ -1,6 +1,9 @@
 package com.partstock.scanner
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -25,6 +28,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,6 +38,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -41,6 +47,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import com.partstock.scanner.parse.SettingsStatus
 import com.partstock.scanner.parse.SettingsStatus.Level
+import kotlinx.coroutines.delay
 
 /** Icon and color for a status level; the icon shape differs per level so it never relies on color alone. */
 @Composable
@@ -99,6 +106,14 @@ fun statusNeutral(text: String) = SettingsStatus.Status(Level.OFF, text)
  * state is remembered in [prefs] under [id]; a card whose [status] is a problem opens by itself until the user
  * closes it.
  */
+/**
+ * The Settings card to bring into view and highlight (opened from Getting started); [onPlaced] gets its y position
+ * in the scrolling column.
+ */
+class SettingsFocus(val id: String, val onPlaced: (Float) -> Unit)
+
+val LocalSettingsFocus = compositionLocalOf<SettingsFocus?> { null }
+
 @Composable
 fun SettingsCard(
     id: String,
@@ -117,6 +132,17 @@ fun SettingsCard(
     val problem = status?.isProblem() == true
     LaunchedEffect(problem) { if (problem) open = true }
     val reduceMotion = rememberReduceMotion()
+    val focus = LocalSettingsFocus.current?.takeIf { it.id == id }
+    // A focused card opens and gets an outline that fades out after a moment.
+    val glow = remember(id) { Animatable(if (focus != null) 1f else 0f) }
+    LaunchedEffect(focus != null) {
+        if (focus != null) {
+            open = true
+            glow.snapTo(1f)
+            delay(2500)
+            if (reduceMotion) glow.snapTo(0f) else glow.animateTo(0f, tween(800))
+        }
+    }
     val body: @Composable () -> Unit = {
         Column(
             Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
@@ -125,8 +151,10 @@ fun SettingsCard(
     }
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth()
+            .let { m -> if (focus != null) m.onGloballyPositioned { focus.onPlaced(it.positionInParent().y) } else m },
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = if (glow.value > 0f) BorderStroke(2.dp, MaterialTheme.colorScheme.primary.copy(alpha = glow.value)) else null,
     ) {
         Column {
             val header = Modifier
