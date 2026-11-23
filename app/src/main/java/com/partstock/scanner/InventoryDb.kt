@@ -1441,11 +1441,44 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
 
     fun reorderCount(): Int = reorderItems().count { ReorderList.orderQuantity(it.onHand, it.minimum) > 0 }
 
-    private fun reorderItems(): List<ReorderList.Item> = all().map { p ->
-        ReorderList.Item().apply {
-            distributor = p.distributor; distributorPn = p.distributorPn; mpn = p.mpn
-            manufacturer = p.manufacturer; description = p.description; link = p.link()
-            onHand = p.quantity; minimum = p.minQty; unitCost = p.unitCost
+    private fun reorderItems(): List<ReorderList.Item> = all().map(::reorderItem)
+
+    fun reorderItem(p: PartRow): ReorderList.Item = ReorderList.Item().apply {
+        distributor = p.distributor; distributorPn = p.distributorPn; mpn = p.mpn
+        manufacturer = p.manufacturer; description = p.description; link = p.link()
+        onHand = p.quantity; minimum = p.minQty; unitCost = p.unitCost; id = p.id
+    }
+
+    /**
+     * "Mark ordered" dates (yyyy-MM-dd) by part id, kept in the meta table (no schema change). Marks of parts that are
+     * no longer in [lowIds] (restocked, minimum removed, deleted) are dropped, so the part reminds again next time.
+     */
+    fun orderedMarks(lowIds: Set<Long>): Map<Long, String> {
+        val db = writableDatabase
+        val out = HashMap<Long, String>()
+        val stale = ArrayList<String>()
+        db.rawQuery("SELECT key, value FROM meta WHERE key LIKE '$ORDERED_PREFIX%'", null).use { c ->
+            while (c.moveToNext()) {
+                val key = c.getString(0)
+                val id = key.removePrefix(ORDERED_PREFIX).toLongOrNull()
+                if (id != null && id in lowIds) out[id] = c.getString(1).orEmpty() else stale.add(key)
+            }
+        }
+        stale.forEach { db.delete("meta", "key = ?", arrayOf(it)) }
+        return out
+    }
+
+    /** Remembers that these parts were ordered on [date] (yyyy-MM-dd). Not stock, so not in the history. */
+    fun markOrdered(ids: Collection<Long>, date: String) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            for (id in ids) {
+                db.execSQL("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", arrayOf("$ORDERED_PREFIX$id", date))
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
         }
     }
 
@@ -1537,6 +1570,9 @@ class InventoryDb(context: Context) : SQLiteOpenHelper(context, "inventory.db", 
             val s = BigDecimal.valueOf(d).setScale(4, RoundingMode.HALF_UP).stripTrailingZeros()
             return (if (s.scale() < 2) s.setScale(2) else s).toPlainString()
         }
+
+        /** meta key prefix for "Mark ordered" on the Reorder screen. */
+        private const val ORDERED_PREFIX = "ordered:"
 
         fun fmtMoney(d: Double): String = String.format(Locale.US, "%.2f", d)
 

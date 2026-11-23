@@ -51,6 +51,8 @@ class InventoryMenuActions(
     val labels: (() -> Unit)?,
     val shareReorder: () -> Unit,
     val saveReorder: () -> Unit,
+    /** Opens the Reorder screen (editable quantities, estimated cost). */
+    val openReorder: () -> Unit = {},
 )
 
 /**
@@ -103,6 +105,11 @@ fun InventoryMenuSheet(
 
             Section("Reorder")
             val none = reorderCount == 0
+            MenuRow(
+                Icons.Filled.ShoppingCart,
+                if (reorderCount == null || reorderCount == 0) "Reorder list…" else "Reorder list ($reorderCount)…",
+                onClick = { run(actions.openReorder) },
+            )
             ShareSaveRow(
                 Icons.Filled.ShoppingCart,
                 if (reorderCount == null) "Reorder list CSV" else "Reorder list CSV ($reorderCount)",

@@ -7,6 +7,8 @@ import com.partstock.scanner.parse.Categories
 import com.partstock.scanner.parse.ChartData
 import com.partstock.scanner.parse.Locations
 import com.partstock.scanner.parse.PartSort
+import com.partstock.scanner.parse.ReorderList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -70,6 +72,9 @@ data class InventoryView(
     val photos: Map<Long, List<String>> get() = data.photos
     val loaded: Boolean get() = data.loaded
 }
+
+/** One Reorder screen line: the part, its CSV item, the suggested quantity and when it was marked ordered. */
+data class ReorderLine(val part: PartRow, val item: ReorderList.Item, val suggested: Int, val orderedOn: String?)
 
 /** One Overview donut slice; [category] is null for the merged "Other" slice of the smaller categories. */
 data class OverviewSlice(val label: String, val category: String?, val value: Double, val fraction: Double)
@@ -136,6 +141,42 @@ class InventoryViewModel(val db: InventoryDb) : ViewModel() {
     val view: StateFlow<InventoryView> = combine(data, filters) { d, f -> build(d, f) }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.Eagerly, InventoryView())
+
+    // ---------------------------------------------------------------- Reorder screen
+
+    private val orderedVersion = MutableStateFlow(0)
+
+    /** Parts at or below their minimum, lowest stock first, with suggested quantities; null until loaded. */
+    val reorder: StateFlow<List<ReorderLine>?> = combine(data, orderedVersion) { d, _ -> d }
+        .map { d -> if (!d.loaded) null else buildReorder(d) }
+        .flowOn(Dispatchers.IO)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    private fun buildReorder(d: InventoryData): List<ReorderLine> {
+        val low = d.parts.filter { it.isLow() }
+        val marks = try {
+            db.orderedMarks(low.map { it.id }.toSet())
+        } catch (e: Exception) {
+            emptyMap()
+        }
+        return low
+            .sortedWith(compareBy<PartRow> { it.quantity.toDouble() / (it.minQty ?: 1).coerceAtLeast(1) }.thenBy { it.mpn })
+            .map { p ->
+                val item = db.reorderItem(p)
+                ReorderLine(p, item, ReorderList.orderQuantity(p.quantity, p.minQty), marks[p.id])
+            }
+    }
+
+    /** "Mark ordered" for these parts, dated [date] (yyyy-MM-dd). */
+    fun markOrdered(ids: Collection<Long>, date: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                db.markOrdered(ids, date)
+            } finally {
+                orderedVersion.value++
+            }
+        }
+    }
 
     /** Back to all parts, no search (when the Inventory screen closes, like before). */
     fun clearFilters() {

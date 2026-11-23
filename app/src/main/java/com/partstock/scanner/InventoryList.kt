@@ -1,5 +1,7 @@
 package com.partstock.scanner
 
+import androidx.compose.material.icons.filled.ShoppingCart
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Swipe
 import androidx.compose.foundation.combinedClickable
@@ -113,6 +115,8 @@ class InventoryListActions(
     val addN: ((PartRow, Int) -> Unit)? = null,
     /** Hides the "Swipe a row" tip for good. */
     val dismissSwipeHint: () -> Unit = {},
+    /** Opens the Reorder screen ("Reorder (4)" under the Low stock filter). */
+    val openReorder: (() -> Unit)? = null,
 )
 
 /** The inventory list: stat tiles, category chips, sticky category headers and swipeable part rows. */
@@ -181,6 +185,19 @@ fun InventoryList(
                 ActiveFilterBar(tags, view.shown.size, view.parts.size) {
                     actions.clearFilters()
                     if (view.bin != null) actions.clearBin()
+                }
+            }
+        }
+        val openReorder = actions.openReorder
+        if (view.lowOnly && view.lowCount > 0 && openReorder != null) {
+            item(key = "reorder") {
+                FilledTonalButton(
+                    onClick = openReorder,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                ) {
+                    Icon(Icons.Filled.ShoppingCart, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.size(8.dp))
+                    Text("Reorder (${view.lowCount})")
                 }
             }
         }

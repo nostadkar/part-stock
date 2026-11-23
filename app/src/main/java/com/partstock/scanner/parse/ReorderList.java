@@ -25,6 +25,72 @@ public final class ReorderList {
         public int onHand;
         public Integer minimum;
         public Double unitCost;
+        /** The part's id (for the Reorder screen); not written to the CSV. */
+        public long id;
+        /** Quantity edited on the Reorder screen; null = the suggested {@link #orderQuantity}. 0 leaves it out. */
+        public Integer orderQty;
+    }
+
+    /** How many of [it] go on the order: the edited quantity, else the suggested one. */
+    public static int quantity(Item it) {
+        return it.orderQty != null ? Math.max(0, it.orderQty) : orderQuantity(it.onHand, it.minimum);
+    }
+
+    /** Header numbers for the Reorder screen: lines to order, cost of the priced ones, and how many have no price. */
+    public static final class Estimate {
+        public final int lines;
+        public final int pieces;
+        public final double cost;
+        public final int unpriced;
+
+        Estimate(int lines, int pieces, double cost, int unpriced) {
+            this.lines = lines;
+            this.pieces = pieces;
+            this.cost = cost;
+            this.unpriced = unpriced;
+        }
+    }
+
+    public static Estimate estimate(List<Item> items) {
+        int lines = 0, pieces = 0, unpriced = 0;
+        double cost = 0;
+        for (Item it : items) {
+            int q = quantity(it);
+            if (q <= 0) continue;
+            lines++;
+            pieces += q;
+            if (it.unitCost == null) unpriced++;
+            else cost += it.unitCost * q;
+        }
+        return new Estimate(lines, pieces, cost, unpriced);
+    }
+
+    /** Line total (unit price × quantity), or null without a price. */
+    public static Double lineTotal(Item it) {
+        return it.unitCost == null ? null : it.unitCost * quantity(it);
+    }
+
+    /**
+     * Text for Mouser's BOM tool ("paste" box): one "part number,quantity" line per part. Mouser lines use the Mouser
+     * part number, others the manufacturer part number; lines with neither are left out.
+     */
+    public static String mouserBom(List<Item> items) {
+        StringBuilder sb = new StringBuilder();
+        for (Item it : items) {
+            int q = quantity(it);
+            if (q <= 0) continue;
+            String pn = isMouser(it) && !nz(it.distributorPn).trim().isEmpty() ? it.distributorPn.trim() : nz(it.mpn).trim();
+            if (pn.isEmpty()) continue;
+            sb.append(pn.replace(",", " ")).append(',').append(q).append('\n');
+        }
+        return sb.toString();
+    }
+
+    /** "Mouser" / "DigiKey" for the line's distributor chip; "" when it's neither. */
+    public static String distributorName(Item it) {
+        if (isMouser(it)) return "Mouser";
+        if (isDigiKey(it)) return "DigiKey";
+        return "";
     }
 
     /** True when the part has a minimum set and stock is at or below it (the "Low stock" filter). */
@@ -68,7 +134,7 @@ public final class ReorderList {
     public static List<List<String>> rows(List<Item> items) {
         List<List<String>> out = new ArrayList<>();
         for (Item it : items) {
-            int qty = orderQuantity(it.onHand, it.minimum);
+            int qty = quantity(it);
             if (qty <= 0) continue;
             String pn = nz(it.distributorPn).trim();
             boolean mouser = isMouser(it);
@@ -81,7 +147,7 @@ public final class ReorderList {
                     nz(it.manufacturer).trim(),
                     nz(it.description).trim(),
                     Integer.toString(it.onHand),
-                    Integer.toString(it.minimum),
+                    it.minimum == null ? "" : Integer.toString(it.minimum),
                     it.unitCost == null ? "" : price(it.unitCost),
                     nz(it.link).trim()));
         }

@@ -81,4 +81,49 @@ public class ReorderListTest {
     public void emptyListHasHeaderOnly() {
         assertEquals(1, InventoryCsv.parse(ReorderList.csv(Arrays.<ReorderList.Item>asList())).size());
     }
+
+    @Test
+    public void editedQuantitiesGoIntoTheCsv() {
+        ReorderList.Item a = item("Mouser", "595-NE555P", "NE555P", 3, 10, 0.42);
+        ReorderList.Item b = item("DigiKey", "296-1411-5-ND", "LM358P", 0, 20, null);
+        ReorderList.Item c = item("Mouser", "81-GRM188", "GRM188", 1, 50, 0.01);
+        List<ReorderList.Item> items = Arrays.asList(a, b, c);
+        String unedited = ReorderList.csv(items);
+        a.orderQty = 25; // raised from the suggested 7
+        c.orderQty = 0;  // left out
+        String csv = ReorderList.csv(items);
+        String[] lines = csv.trim().split("\r?\n");
+        assertEquals(3, lines.length); // header + a + b
+        assertTrue(lines[1], lines[1].startsWith("595-NE555P,25,"));
+        assertTrue(lines[2], lines[2].startsWith(",20,296-1411-5-ND,"));
+        // Back to the suggestions: the same file as before.
+        a.orderQty = null;
+        c.orderQty = null;
+        assertEquals(unedited, ReorderList.csv(items));
+    }
+
+    @Test
+    public void estimateSkipsUnpricedLines() {
+        ReorderList.Item a = item("Mouser", "595-NE555P", "NE555P", 3, 10, 0.5);
+        ReorderList.Item b = item("DigiKey", "296-1411-5-ND", "LM358P", 0, 20, null);
+        ReorderList.Item c = item("Mouser", "81-GRM188", "GRM188", 60, 50, 0.01); // not below its minimum
+        ReorderList.Estimate e = ReorderList.estimate(Arrays.asList(a, b, c));
+        assertEquals(2, e.lines);
+        assertEquals(27, e.pieces);
+        assertEquals(3.5, e.cost, 1e-9);
+        assertEquals(1, e.unpriced);
+        assertEquals(3.5, ReorderList.lineTotal(a), 1e-9);
+        assertEquals(null, ReorderList.lineTotal(b));
+    }
+
+    @Test
+    public void mouserBomTextUsesMouserNumbersElseMpn() {
+        ReorderList.Item a = item("Mouser", "595-NE555P", "NE555P", 3, 10, 0.5);
+        ReorderList.Item b = item("DigiKey", "296-1411-5-ND", "LM358P", 0, 20, null);
+        ReorderList.Item c = item("Other", "", "", 0, 5, null);
+        assertEquals("595-NE555P,7\nLM358P,20\n", ReorderList.mouserBom(Arrays.asList(a, b, c)));
+        assertEquals("Mouser", ReorderList.distributorName(a));
+        assertEquals("DigiKey", ReorderList.distributorName(b));
+        assertEquals("", ReorderList.distributorName(c));
+    }
 }
