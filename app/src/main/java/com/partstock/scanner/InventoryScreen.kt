@@ -30,11 +30,8 @@ import androidx.compose.material.icons.filled.DeveloperBoard
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeTopAppBar
@@ -108,6 +105,8 @@ fun InventoryScreen(
     var query by rememberSaveable { mutableStateOf(vm.query.value) }
     var searching by rememberSaveable { mutableStateOf(query.isNotEmpty()) }
     var menuOpen by remember { mutableStateOf(false) }
+    // Parts below their minimum, counted when the menu opens (null while counting).
+    var reorderCount by remember { mutableStateOf<Int?>(null) }
     var selectedId by rememberSaveable { mutableStateOf(openPart) }
     // Follows the latest copy of the part, and closes the page when the part is gone (e.g. undone).
     val selected = selectedId?.let { id -> data.parts.firstOrNull { it.id == id } }
@@ -197,6 +196,70 @@ fun InventoryScreen(
                 toast("Save failed: ${e.message}")
             }
         }
+    }
+
+    LaunchedEffect(menuOpen, data) {
+        if (menuOpen) reorderCount = try {
+            withContext(Dispatchers.IO) { db.reorderCount() }
+        } catch (e: Exception) {
+            null
+        }
+    }
+    if (menuOpen) {
+        InventoryMenuSheet(
+            actions = InventoryMenuActions(
+                refreshPrices = { refreshing = true },
+                buildKit = { buildingKit = true },
+                importOrder = { importingOrder = true },
+                shareInventory = { withCsv(db::inventoryCsv) { Export.share(context, Export.fileName("inventory"), it) } },
+                saveInventory = {
+                    withCsv(db::inventoryCsv) {
+                        pendingCsv = it
+                        saveFile.launch(Export.fileName("inventory"))
+                    }
+                },
+                shareZip = {
+                    zipping = true
+                    scope.launch {
+                        try {
+                            val chooser = withContext(Dispatchers.IO) { Export.shareZip(context, db) }
+                            context.startActivity(chooser)
+                        } catch (e: Exception) {
+                            toast("Export failed: ${e.message}")
+                        }
+                        zipping = false
+                    }
+                },
+                saveZip = { saveZip.launch(Export.zipName()) },
+                shareLog = { withCsv(db::logCsv) { Export.share(context, Export.fileName("scan-log"), it) } },
+                saveLog = {
+                    withCsv(db::logCsv) {
+                        pendingCsv = it
+                        saveFile.launch(Export.fileName("scan-log"))
+                    }
+                },
+                labels = if (prefs != null) ({ labels = shown.map(::partLabel) }) else null,
+                shareReorder = {
+                    withCsv({ if (db.reorderCount() == 0) "" else db.reorderCsv() }) { csv ->
+                        if (csv.isEmpty()) toast("Nothing is below its minimum")
+                        else Export.share(context, Export.fileName("reorder"), csv)
+                    }
+                },
+                saveReorder = {
+                    withCsv({ if (db.reorderCount() == 0) "" else db.reorderCsv() }) { csv ->
+                        if (csv.isEmpty()) toast("Nothing is below its minimum")
+                        else {
+                            pendingCsv = csv
+                            saveFile.launch(Export.fileName("reorder"))
+                        }
+                    }
+                },
+            ),
+            shownCount = shown.size,
+            reorderCount = reorderCount,
+            zipping = zipping,
+            onDismiss = { menuOpen = false },
+        )
     }
 
     BackHandler(enabled = searching && selectedId == null) { closeSearch() }
@@ -292,87 +355,8 @@ fun InventoryScreen(
             modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
             topBar = {
                 val menu: @Composable () -> Unit = {
-                    Box {
-                        IconButton(onClick = { menuOpen = true }) {
-                            Icon(Icons.Filled.MoreVert, contentDescription = "More: prices, kits, import and export")
-                        }
-                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                            DropdownMenuItem(text = { Text("Refresh prices from Mouser…") }, onClick = {
-                                menuOpen = false
-                                refreshing = true
-                            })
-                            DropdownMenuItem(text = { Text("Build kit…") }, onClick = {
-                                menuOpen = false
-                                buildingKit = true
-                            })
-                            HorizontalDivider()
-                            DropdownMenuItem(text = { Text("Import Mouser / DigiKey order CSV…") }, onClick = {
-                                menuOpen = false
-                                importingOrder = true
-                            })
-                            DropdownMenuItem(text = { Text("Share inventory CSV") }, onClick = {
-                                menuOpen = false
-                                withCsv(db::inventoryCsv) { Export.share(context, Export.fileName("inventory"), it) }
-                            })
-                            DropdownMenuItem(text = { Text("Save inventory CSV to file…") }, onClick = {
-                                menuOpen = false
-                                withCsv(db::inventoryCsv) {
-                                    pendingCsv = it
-                                    saveFile.launch(Export.fileName("inventory"))
-                                }
-                            })
-                            DropdownMenuItem(text = { Text("Share inventory + photos (zip)") }, enabled = !zipping, onClick = {
-                                menuOpen = false
-                                zipping = true
-                                scope.launch {
-                                    try {
-                                        val chooser = withContext(Dispatchers.IO) { Export.shareZip(context, db) }
-                                        context.startActivity(chooser)
-                                    } catch (e: Exception) {
-                                        toast("Export failed: ${e.message}")
-                                    }
-                                    zipping = false
-                                }
-                            })
-                            DropdownMenuItem(text = { Text("Save inventory + photos (zip) to file…") }, enabled = !zipping, onClick = {
-                                menuOpen = false
-                                saveZip.launch(Export.zipName())
-                            })
-                            if (prefs != null) {
-                                DropdownMenuItem(text = { Text("Make QR labels for the ${shown.size} shown parts…") }, onClick = {
-                                    menuOpen = false
-                                    labels = shown.map(::partLabel)
-                                })
-                            }
-                            DropdownMenuItem(text = { Text("Share reorder list CSV") }, onClick = {
-                                menuOpen = false
-                                withCsv({ if (db.reorderCount() == 0) "" else db.reorderCsv() }) { csv ->
-                                    if (csv.isEmpty()) toast("Nothing is below its minimum")
-                                    else Export.share(context, Export.fileName("reorder"), csv)
-                                }
-                            })
-                            DropdownMenuItem(text = { Text("Save reorder list CSV to file…") }, onClick = {
-                                menuOpen = false
-                                withCsv({ if (db.reorderCount() == 0) "" else db.reorderCsv() }) { csv ->
-                                    if (csv.isEmpty()) toast("Nothing is below its minimum")
-                                    else {
-                                        pendingCsv = csv
-                                        saveFile.launch(Export.fileName("reorder"))
-                                    }
-                                }
-                            })
-                            DropdownMenuItem(text = { Text("Share scan log CSV") }, onClick = {
-                                menuOpen = false
-                                withCsv(db::logCsv) { Export.share(context, Export.fileName("scan-log"), it) }
-                            })
-                            DropdownMenuItem(text = { Text("Save scan log CSV to file…") }, onClick = {
-                                menuOpen = false
-                                withCsv(db::logCsv) {
-                                    pendingCsv = it
-                                    saveFile.launch(Export.fileName("scan-log"))
-                                }
-                            })
-                        }
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = "More: prices, import, export, labels, reorder and kits")
                     }
                 }
                 if (searching) {

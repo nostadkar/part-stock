@@ -164,7 +164,7 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   shown from the scan log. Undo works for changes up to 30 days old (older "before" copies are dropped to keep the
   database small; the history lines stay). Undone scans stay in the scan log marked "undone", so the duplicate-bag
   check ignores them. A CSV restore isn't recorded in the history (use a backup file to go back).
-- **QR labels**: *Label* on a part's page, *Make QR labels for the shown parts…* in the Inventory ⋮ menu (filter
+- **QR labels**: *Label* on a part's page, *QR labels for the shown parts…* in the Inventory ⋮ menu (filter
   by category or bin first), or the QR icon next to a bin on the Locations screen (a bin label, or labels for all its
   parts). Pick 62 × 29 mm (Brother DK), 2 × 1 in thermal, or a Letter sheet of 30 (Avery 5160), then *Share* the PDF to
   your label printer's app or *Print* with Android printing. Each label has a QR code with a short app-only text
@@ -188,7 +188,8 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
   their minimum with the quantity to order (minimum − on hand, rounded up: exact below 10, then to 5s, 10s, 50s, 100s),
   MPN, last unit price and link. Its first two columns, *Mouser Part Number* and *Quantity*, are what Mouser's BOM tool
   asks for; DigiKey parts have their part number in a separate column.
-- **Export** (⋮ menu on the Inventory screen): share or save the inventory CSV, or the scan log CSV
+- **Export** (⋮ menu on the Inventory screen, a bottom sheet grouped into Prices, Import, Export & share, Labels,
+  Reorder and Kits; each export row has *Share* and *Save* buttons): share or save the inventory CSV, or the scan log CSV
   (every save with the raw OCR text). *Quantity* is the total and *Location* the main bin; the last column,
   *Locations*, lists stock per bin like `A3: 200; R2: 1000` and is read back by *Restore from CSV*. The CSV opens directly in Google Sheets or Excel.
 - **Import an order** (⋮ menu on the Inventory screen → *Import Mouser / DigiKey order CSV…*): pick a CSV exported
