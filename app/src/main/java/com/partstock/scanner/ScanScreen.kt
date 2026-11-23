@@ -25,7 +25,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -41,7 +40,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
@@ -68,13 +66,18 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -84,6 +87,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.mlkit.vision.common.InputImage
 import com.partstock.scanner.parse.OcrLine
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -130,6 +134,9 @@ fun ScanScreen(
     var busy by remember { mutableStateOf(false) }
 
     var progress by remember { mutableStateOf<String?>(null) }
+    // Frames read so far in the current burst (fills the ring around the shutter), and the post-capture flash.
+    var burstStep by remember { mutableIntStateOf(0) }
+    var flash by remember { mutableStateOf(GuideFlash.NONE) }
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
@@ -166,6 +173,7 @@ fun ScanScreen(
                 val codes = mutableListOf<String>()
                 for (i in 1..BURST_FRAMES) {
                     progress = "Reading $i/$BURST_FRAMES… hold still"
+                    burstStep = i - 1
                     // Keep the last photo of the burst for the review screen.
                     val f = captureAndRead(
                         imageCapture, context, keepPhoto = i == BURST_FRAMES, readBarcodes = readBarcodes,
@@ -173,12 +181,21 @@ fun ScanScreen(
                     frames.add(f.lines)
                     codes.addAll(f.codes)
                     if (f.photo != null) photo = f.photo
+                    burstStep = i
                 }
+                // Flash green (something was read) or amber (nothing) briefly before moving on.
+                val readSomething = codes.isNotEmpty() || frames.any { it.isNotEmpty() }
+                flash = if (readSomething) GuideFlash.READ_OK else GuideFlash.NOTHING_READ
+                delay(GUIDE_FLASH_MS)
                 onFrames(frames, photo, codes)
             } catch (e: Exception) {
+                flash = GuideFlash.NOTHING_READ
                 onError("Capture failed: ${e.message}")
+                delay(GUIDE_FLASH_MS)
             } finally {
                 progress = null
+                burstStep = 0
+                flash = GuideFlash.NONE
                 busy = false
             }
         }
@@ -246,15 +263,7 @@ fun ScanScreen(
                         .fillMaxWidth(0.88f)
                         .aspectRatio(1.3f)
                 }
-                Box(guide.border(2.dp, Color.White.copy(alpha = 0.8f), RoundedCornerShape(12.dp)))
-                progress?.let {
-                    Text(
-                        it,
-                        color = Color.White,
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.align(Alignment.Center),
-                    )
-                }
+                ScanGuide(guide, flash)
             } else {
                 Column(
                     Modifier.align(Alignment.Center).padding(24.dp),
@@ -295,14 +304,22 @@ fun ScanScreen(
             ) { Icon(Icons.Filled.PhotoLibrary, contentDescription = "Pick photo") }
         }
         val shutter: @Composable () -> Unit = {
-            FilledIconButton(
-                onClick = ::capture,
-                enabled = hasCamera && !busy,
-                modifier = Modifier.size(80.dp),
-                colors = IconButtonDefaults.filledIconButtonColors(),
-            ) {
-                if (busy) CircularProgressIndicator(Modifier.size(32.dp), color = MaterialTheme.colorScheme.onPrimary)
-                else Icon(Icons.Filled.CameraAlt, contentDescription = "Read label", modifier = Modifier.size(36.dp))
+            // The burst shows as a 3-segment ring around the shutter; TalkBack hears "Reading 2/3…" instead.
+            RingedShutter(burstStep, BURST_FRAMES, 96.dp) {
+                FilledIconButton(
+                    onClick = ::capture,
+                    enabled = hasCamera && !busy,
+                    modifier = Modifier.size(80.dp).semantics {
+                        progress?.let {
+                            stateDescription = it
+                            liveRegion = LiveRegionMode.Polite
+                        }
+                    },
+                    colors = IconButtonDefaults.filledIconButtonColors(),
+                ) {
+                    if (busy) CircularProgressIndicator(Modifier.size(32.dp), color = MaterialTheme.colorScheme.onPrimary)
+                    else Icon(Icons.Filled.CameraAlt, contentDescription = "Read label", modifier = Modifier.size(36.dp))
+                }
             }
         }
         val torchButton: @Composable () -> Unit = {
@@ -322,7 +339,7 @@ fun ScanScreen(
         if (config.screenWidthDp > config.screenHeightDp) {
             // Landscape: preview on the left, controls in a column on the right, so nothing covers the viewfinder.
             Row(Modifier.fillMaxSize().padding(padding)) {
-                Box(Modifier.weight(1f).fillMaxHeight()) { viewfinder(this, true) }
+                Box(Modifier.weight(1f).fillMaxHeight().clipToBounds()) { viewfinder(this, true) }
                 Column(
                     Modifier
                         .width(if (batchMode) 300.dp else 220.dp)
@@ -344,7 +361,7 @@ fun ScanScreen(
                 }
             }
         } else {
-            Box(Modifier.fillMaxSize().padding(padding)) {
+            Box(Modifier.fillMaxSize().padding(padding).clipToBounds()) {
                 viewfinder(this, false)
                 Column(
                     Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
@@ -353,12 +370,7 @@ fun ScanScreen(
                 ) {
                     batchChip()
                     if (hasCamera) {
-                        Text(
-                            hint,
-                            color = Color.White,
-                            textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
+                        HintPill(hint)
                     }
                 }
 

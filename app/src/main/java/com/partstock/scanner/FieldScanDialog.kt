@@ -15,7 +15,6 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -29,7 +28,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
@@ -170,13 +168,13 @@ fun FieldScanDialog(fieldName: String, onDismiss: () -> Unit, onRead: (List<OcrL
                         }
                     },
                 )
-                Box(
+                ScanGuide(
                     Modifier
                         .align(Alignment.Center)
                         .fillMaxWidth(0.9f)
                         .height(if (fieldName == "description") 150.dp else 90.dp)
-                        .border(2.dp, Color.White, RoundedCornerShape(10.dp))
                         .onGloballyPositioned { boxBounds = it.boundsInRoot() },
+                    cornerRadius = 10.dp,
                 )
             } else {
                 Column(Modifier.align(Alignment.Center).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -191,16 +189,13 @@ fun FieldScanDialog(fieldName: String, onDismiss: () -> Unit, onRead: (List<OcrL
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "Fit just the $fieldName in the box",
-                        color = Color.White,
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.weight(1f),
-                    )
+                    Box(Modifier.weight(1f)) {
+                        HintPill("Fit just the $fieldName in the box", style = MaterialTheme.typography.titleMedium)
+                    }
                     IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, contentDescription = "Close", tint = Color.White) }
                 }
                 message?.let {
-                    Text(it, color = Color.White, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+                    HintPill(it, modifier = Modifier.padding(top = 6.dp), announce = true)
                 }
             }
             FilledIconButton(

@@ -104,7 +104,9 @@ APK is easy to unpack. If a key is ever pasted somewhere public, regenerate it i
 
 - Fit the label in the box and tap the shutter, or pick an existing photo. The camera focuses on the box first
   (tap the preview to focus somewhere else), then reads 3 photos in a row and takes, for each field, the value
-  most photos agree on, so a single misread character doesn't stick. Hold still for about two seconds.
+  most photos agree on, so a single misread character doesn't stick. Hold still for about two seconds:
+  the ring around the shutter fills one segment per photo, and the corner brackets flash green (something read)
+  or amber (nothing read) before the review opens.
   The foil bags glare: tilt the bag a little rather than using the light.
 - **Barcodes as a cross-check**: the same photos are also scanned for barcodes (ML Kit, offline). DigiKey's DataMatrix
   (ECIA / MH10.8.2: `P` customer PN, `1P` MPN, `30P` DigiKey PN, `Q` quantity, `K` PO, `9D`/`10D` date code, `1T` lot)
