@@ -91,6 +91,8 @@ class PartDetailsActions(
     val history: () -> Unit,
     /** Null hides the Label button. */
     val label: (() -> Unit)?,
+    /** Back to the list searching for a spec (tap the 0603 chip → search "0603"). */
+    val search: ((String) -> Unit)? = null,
 )
 
 /** Full-screen part page: photo, big quantity with steppers, actions, and sections edited in place. */
@@ -212,6 +214,7 @@ fun PartDetails(
                     if (sub.isNotBlank()) {
                         Text(sub, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                    SpecHero(part.specs(), Modifier.padding(top = 8.dp), onTap = actions.search)
                 }
             }
             photoStrip()

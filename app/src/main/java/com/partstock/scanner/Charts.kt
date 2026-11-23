@@ -68,6 +68,11 @@ object ChartColors {
     @ReadOnlyComposable
     fun categorical(): List<Color> = listOf(MaterialTheme.colorScheme.primary) + if (isDark()) dark else light
 
+    /** Only the fixed color-blind-safe set (no theme primary), for light or dark surfaces. */
+    @Composable
+    @ReadOnlyComposable
+    fun fixed(): List<Color> = if (isDark()) dark else light
+
     /** Neutral color for the "Other" slice and tracks. */
     @Composable
     @ReadOnlyComposable

@@ -90,6 +90,8 @@ class InventoryListActions(
     val setOverviewByValue: (Boolean) -> Unit = {},
     /** Shows only parts without a price (the Value tile's "unpriced" count), or all again. */
     val toggleUnpriced: () -> Unit = {},
+    /** Searches for a spec chip's text (tap 0603 → search "0603"). */
+    val search: ((String) -> Unit)? = null,
 )
 
 /** The inventory list: stat tiles, category chips, sticky category headers and swipeable part rows. */
@@ -200,15 +202,23 @@ fun InventoryList(
                         Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(
-                            if (view.lowestFirst) Icons.AutoMirrored.Filled.Sort else categoryIcon(cat),
-                            contentDescription = null, tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp),
-                        )
+                        val tint = if (view.lowestFirst) null else categoryTint(cat)
+                        Box(
+                            Modifier.size(26.dp).clip(CircleShape)
+                                .background(tint?.container ?: MaterialTheme.colorScheme.secondaryContainer),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                if (view.lowestFirst) Icons.AutoMirrored.Filled.Sort else categoryIcon(cat),
+                                contentDescription = null,
+                                tint = tint?.onContainer ?: MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
                         Text(
                             "$cat · ${rows.size}",
                             style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.primary,
+                            color = tint?.onSurface ?: MaterialTheme.colorScheme.primary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(start = 8.dp),
@@ -233,6 +243,7 @@ fun InventoryList(
                         onClick = { actions.open(p) },
                         datasheets = datasheets,
                         unpricedBadge = unpricedBadge,
+                        onSpecTap = actions.search,
                     )
                 }
             }
@@ -431,6 +442,7 @@ private fun PartRowCard(
     onClick: () -> Unit,
     datasheets: DatasheetOpener,
     unpricedBadge: Boolean = false,
+    onSpecTap: ((String) -> Unit)? = null,
 ) {
     val p = part
     val mark = MaterialTheme.colorScheme.tertiaryContainer
@@ -463,10 +475,15 @@ private fun PartRowCard(
                 }
                 val bins = p.bins()
                 val where = Locations.summary(bins).let { w -> if (w.isNotBlank() && bins.size == 1) "Bin $w" else w }
-                val chips = p.specs().chips() + listOfNotNull(where.takeIf { it.isNotBlank() })
-                if (chips.isNotEmpty()) {
-                    SpecChips(chips, Modifier.padding(top = 4.dp))
-                }
+                val specs = p.specs()
+                SpecChips(
+                    specs.chips(),
+                    Modifier.padding(top = 4.dp),
+                    pkg = specs.pkg,
+                    extra = listOfNotNull(where.takeIf { it.isNotBlank() }),
+                    onTap = onSpecTap,
+                    onOtherClick = onClick,
+                )
             }
             if (p.datasheet().isNotBlank()) {
                 val search = datasheets.isSearch(p)
@@ -523,13 +540,14 @@ fun PartImage(part: PartRow, photo: String?, size: androidx.compose.ui.unit.Dp, 
         if (photo != null) {
             PhotoThumb(photo, size)
         } else {
+            val tint = categoryTint(part.category)
             Box(
-                Modifier.fillMaxSize().background(MaterialTheme.colorScheme.secondaryContainer),
+                Modifier.fillMaxSize().background(tint.container),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     categoryIcon(part.category), contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    tint = tint.onContainer,
                     modifier = Modifier.size(size * 0.5f),
                 )
             }

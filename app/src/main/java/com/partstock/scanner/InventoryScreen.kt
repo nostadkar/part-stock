@@ -295,6 +295,7 @@ fun InventoryScreen(
 
     val listActions = InventoryListActions(
         open = { p -> selectedId = p.id },
+        search = { q -> setQuery(q) },
         useOne = { p -> useParts(p, 1) },
         addOne = ::addOne,
         setBucket = { vm.bucket.value = it },
@@ -336,6 +337,10 @@ fun InventoryScreen(
             datasheets = datasheets,
             actions = PartDetailsActions(
                 back = { selectedId = null },
+                search = { q ->
+                    selectedId = null
+                    setQuery(q)
+                },
                 save = { stock, loc, desc, cost, cat, min ->
                     scope.launch {
                         withContext(Dispatchers.IO) { db.update(part.id, stock, loc, desc, cost, cat, min) }

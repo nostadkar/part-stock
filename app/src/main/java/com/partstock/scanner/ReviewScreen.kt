@@ -541,7 +541,7 @@ fun ReviewScreen(
             val specs = remember(description, apiSpecs) { apiSpecs.orElse(PartSpecs.fromDescription(description)) }
             if (!specs.isEmpty || datasheetUrl.isNotBlank()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    SpecChips(specs.chips(), Modifier.weight(1f))
+                    SpecChips(specs.chips(), Modifier.weight(1f), pkg = specs.pkg)
                     if (datasheetUrl.isNotBlank()) {
                         TextButton(onClick = { openLink(context, datasheetUrl) }) { Text("Datasheet") }
                     }

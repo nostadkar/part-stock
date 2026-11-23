@@ -73,7 +73,7 @@ wallpaper; Settings → *Wallpaper colors* off (or Android 8–11) uses Part Sto
   Mouser's category when looked up, otherwise from the description. Change it with the Category button. The Inventory
   screen groups by category with filter chips, and the CSV has a Category column.
 - **Value, package and datasheet**: the value (10kΩ, 100nF, 4.7µH), tolerance, voltage and package (0603, SOT-23,
-  MSOP-16) are read from the description (or Mouser's attributes) and shown as small chips on each inventory row. A
+  MSOP-16) are read from the description (or Mouser's attributes) and shown as chips on each inventory row (tap one to search for it, e.g. 0603; long-press copies it; common packages get a small outline drawing) and large under the part number on the part page. Parts without a photo get a tile tinted by category (from the wallpaper colors when those are on), matching the category headers. A
   lookup also saves the datasheet link. Each inventory row has a datasheet icon (also a *Datasheet* button on the part
   page) that opens it; parts without a saved link have it looked up on Mouser (DigiKey for DigiKey parts) when you tap it and a key is saved, and the link is kept; with no key, or none listed, it opens a web search for "<MPN> datasheet". Search understands values and packages:
   `10k 0603` finds a 10kΩ 0603 resistor (10k = 10K = 10kΩ = 10000 = 4k7-style codes), `0.1uF` = `100nF`, `sot23` =
