@@ -3,7 +3,6 @@ package com.partstock.scanner
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.widget.Toast
 import androidx.core.content.FileProvider
 import com.partstock.scanner.parse.InventoryCsv
 import java.io.File
@@ -17,7 +16,7 @@ fun openLink(context: Context, url: String) {
     try {
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     } catch (e: Exception) {
-        Toast.makeText(context, "No app can open this link", Toast.LENGTH_LONG).show()
+        Feedback.error(context, "No app can open this link")
     }
 }
 

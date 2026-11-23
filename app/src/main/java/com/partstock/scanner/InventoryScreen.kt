@@ -1,6 +1,5 @@
 package com.partstock.scanner
 
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -157,7 +156,7 @@ fun InventoryScreen(
     val hasPriceKey = remember { secrets.getMouserKey() != null || secrets.getDigiKey() != null }
     val unpricedBadge = hasPriceKey || view.unpriced < view.parts.size
 
-    fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+    fun toast(msg: String) = Feedback.info(context, msg)
 
     fun setQuery(q: String) {
         query = q
@@ -175,7 +174,7 @@ fun InventoryScreen(
             val csv = try {
                 withContext(Dispatchers.IO) { build() }
             } catch (e: Exception) {
-                toast("Export failed: ${e.message}")
+                Feedback.error(context, "Export failed: ${e.message}", retry = { withCsv(build, then) })
                 return@launch
             }
             then(csv)
@@ -220,12 +219,16 @@ fun InventoryScreen(
 
     val saveFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
         if (uri != null) {
-            try {
-                Export.writeTo(context, uri, pendingCsv)
-                toast("Saved")
-            } catch (e: Exception) {
-                toast("Save failed: ${e.message}")
+            val csv = pendingCsv
+            fun write() {
+                try {
+                    Export.writeTo(context, uri, csv)
+                    Feedback.success(context, "Saved")
+                } catch (e: Exception) {
+                    Feedback.error(context, "Save failed: ${e.message}", retry = ::write)
+                }
             }
+            write()
         }
     }
 

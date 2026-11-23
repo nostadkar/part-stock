@@ -1,6 +1,5 @@
 package com.partstock.scanner
 
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -77,7 +76,7 @@ fun ProjectsScreen(db: InventoryDb, onBack: () -> Unit) {
     var pickingKit by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+    fun toast(msg: String) = Feedback.info(context, msg)
 
     val pickBom = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -286,16 +285,20 @@ private fun ProjectDetail(db: InventoryDb, id: Long, onBack: () -> Unit) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
-    fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+    fun toast(msg: String) = Feedback.info(context, msg)
 
     val saveFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
         if (uri != null) {
-            try {
-                Export.writeTo(context, uri, pendingCsv)
-                toast("Saved")
-            } catch (e: Exception) {
-                toast("Save failed: ${e.message}")
+            val csv = pendingCsv
+            fun write() {
+                try {
+                    Export.writeTo(context, uri, csv)
+                    Feedback.success(context, "Saved")
+                } catch (e: Exception) {
+                    Feedback.error(context, "Save failed: ${e.message}", retry = ::write)
+                }
             }
+            write()
         }
     }
     val csvName = Export.fileName("order-" + project.name.replace(Regex("[^A-Za-z0-9._-]+"), "-").take(40))

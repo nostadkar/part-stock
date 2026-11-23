@@ -297,6 +297,11 @@ app/src/main/java/com/partstock/scanner/
   LocationsScreen.kt         Bins with counts, fill bars, thumbnails, search/sort, rename everywhere
   Labels.kt                  QR label PDFs (PdfDocument + ZXing encoder), share / print
   UndoOffer.kt               Undo snackbar after saves
+  Feedback.kt                One snackbar style for results and errors (Retry, TalkBack live region), Toast only without a screen
+  ActivityScreen.kt          Activity page: added vs used per week, most used, untouched stock, biggest changes
+  parse/ActivityStats.java   Weekly buckets, added/used rules, "last touched" (pure Java, unit tested)
+  GettingStartedCard.kt      Getting started checklist card for new installs
+  parse/GettingStarted.java  Checklist items, done/skip rules, who sees it (pure Java, unit tested)
   parse/ChangeSummary.java   "What changed" line for the part history (pure Java, unit tested)
   parse/LabelCodes.java      QR label payloads PS:P:<id> / PS:L:<bin> (pure Java, unit tested)
   parse/LabelSheet.java      Avery 5160 slot → page/position math with a start slot (pure Java, unit tested)

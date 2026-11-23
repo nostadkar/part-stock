@@ -1,6 +1,5 @@
 package com.partstock.scanner
 
-import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -251,7 +250,7 @@ fun LocationsScreen(
                         scope.launch {
                             val n = withContext(Dispatchers.IO) { vm.db.renameLocation(b.name, to) }
                             if (Locations.same(prefs.lastLocation, b.name)) prefs.lastLocation = Locations.plain(to)
-                            Toast.makeText(context, "Renamed on $n part${if (n == 1) "" else "s"}", Toast.LENGTH_LONG).show()
+                            Feedback.success(context, "Renamed on $n part${if (n == 1) "" else "s"}")
                         }
                     },
                 ) { Text("Rename") }

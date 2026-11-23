@@ -6,7 +6,6 @@ import android.graphics.Bitmap
 import android.os.Build
 import android.os.Bundle
 import android.os.StrictMode
-import android.widget.Toast
 import android.graphics.Color as AndroidColor
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -60,7 +59,6 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.DisposableEffect
@@ -280,7 +278,7 @@ private fun App(
     var batchBin by remember { mutableStateOf(prefs.batchBin) }
     var batchSaving by remember { mutableStateOf(false) }
 
-    fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+    fun toast(msg: String) = Feedback.info(context, msg)
 
     // Launcher shortcuts. Scan still goes through the camera permission prompt on the Scan screen.
     LaunchedEffect(start) {
@@ -292,7 +290,7 @@ private fun App(
                 batchBin = bin
                 prefs.batchBin = bin
             }
-            toast("Scanning into ${Locations.normalize(bin)}")
+            Feedback.success(context, "Scanning into ${Locations.normalize(bin)}")
         }
         screen = r.start.screen()
         onStarted()
@@ -365,7 +363,7 @@ private fun App(
                     toast("No bag passes all the checks right now")
                 }
             } catch (e: Exception) {
-                toast("Save failed: ${e.message}")
+                Feedback.error(context, "Save failed: ${e.message}", retry = ::saveConfident)
             } finally {
                 batchSaving = false
             }
@@ -448,7 +446,7 @@ private fun App(
                         batchBin = Locations.plain(own.bin)
                         prefs.batchBin = batchBin
                     }
-                    toast("Bin set to ${Locations.normalize(own.bin)} for the next saves")
+                    Feedback.success(context, "Bin set to ${Locations.normalize(own.bin)} for the next saves")
                 } else if (batchMode) {
                     val labelCodes = if (prefs.readBarcodes) codes.filterNot { LabelCodes.isOurs(it) } else emptyList()
                     if (frames.all { f -> f.all { it.text.isBlank() } }) toast("No text found. Move closer and avoid glare.")
@@ -461,7 +459,7 @@ private fun App(
                     else screen = Screen.Review(part, photo, boxes = boxes)
                 }
             },
-            onError = ::toast,
+            onError = { Feedback.error(context, it) },
             batchMode = batchMode,
             onBatchMode = {
                 batchMode = it
@@ -582,7 +580,7 @@ private fun App(
                 screen = Screen.Inventory()
             },
         )
-        SnackbarHost(snackbar)
+        FeedbackHost(snackbar)
     }
     }
     if (showBar && !rail) {

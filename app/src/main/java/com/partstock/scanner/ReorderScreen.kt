@@ -1,6 +1,5 @@
 package com.partstock.scanner
 
-import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -32,6 +31,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -85,7 +85,7 @@ private fun ReorderContent(lines: List<ReorderLine>?, vm: InventoryViewModel, on
     val edits = remember { mutableStateMapOf<Long, Int>() }
     val leftOut = remember { mutableStateMapOf<Long, Boolean>() }
     var editing by remember { mutableStateOf<ReorderLine?>(null) }
-    fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+    fun toast(msg: String) = Feedback.success(context, msg)
 
     val all = lines.orEmpty()
     // Lines marked ordered, or with nothing to order, start left out.
@@ -96,7 +96,10 @@ private fun ReorderContent(lines: List<ReorderLine>?, vm: InventoryViewModel, on
     val chosenItems = chosen.map(::itemOf)
     val estimate = ReorderList.estimate(chosenItems)
 
+    val feedback = remember { SnackbarHostState() }
     Scaffold(
+        // Its own host: messages would be hidden behind this full-screen page otherwise.
+        snackbarHost = { FeedbackHost(feedback) },
         topBar = {
             TopAppBar(
                 title = { Text("Reorder") },
@@ -126,7 +129,7 @@ private fun ReorderContent(lines: List<ReorderLine>?, vm: InventoryViewModel, on
                         onClick = {
                             val text = ReorderList.mouserBom(chosenItems)
                             if (text.isBlank()) {
-                                toast("No part numbers to copy")
+                                Feedback.info(context, "No part numbers to copy")
                             } else {
                                 clipboard.setText(AnnotatedString(text))
                                 val n = text.lines().count { it.isNotBlank() }

@@ -16,7 +16,6 @@ import android.print.PrintAttributes
 import android.print.PrintDocumentAdapter
 import android.print.PrintDocumentInfo
 import android.print.PrintManager
-import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -338,7 +337,7 @@ fun LabelDialog(items: List<LabelItem>, prefs: Prefs, onDismiss: () -> Unit) {
         File(File(context.cacheDir, "exports"), "part-stock-labels.pdf")
             .also { LabelPdf.write(it, items, size, if (size.sheet) start else 0) }
     } catch (e: Exception) {
-        Toast.makeText(context, "Couldn't make the labels: ${e.message}", Toast.LENGTH_LONG).show()
+        Feedback.error(context, "Couldn't make the labels: ${e.message}")
         null
     }
 

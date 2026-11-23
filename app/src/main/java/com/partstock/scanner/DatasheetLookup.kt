@@ -1,7 +1,6 @@
 package com.partstock.scanner
 
 import android.content.Context
-import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -79,12 +78,12 @@ class DatasheetOpener(
             val found = try {
                 DatasheetLookup.find(p, secrets)
             } catch (e: MouserException) {
-                toast(e.message ?: "Mouser lookup failed")
+                Feedback.error(context, e.message ?: "Mouser lookup failed")
                 null
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                toast("Datasheet lookup failed")
+                Feedback.error(context, "Datasheet lookup failed")
                 null
             }
             busyId = null
@@ -100,7 +99,7 @@ class DatasheetOpener(
         }
     }
 
-    private fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+    private fun toast(msg: String) = Feedback.info(context, msg)
 }
 
 @Composable
